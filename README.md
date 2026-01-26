@@ -28,14 +28,16 @@ Ketchup is an autonomous social coordination platform designed to solve the "sch
 
 The `ketchup-backend` is organized following modular programming practices to ensure clarity and maintainability .
 
-* **`apps/api/`**: FastAPI gateway and orchestration layer handling tool calling, validation, and routing.
-* **`apps/vllm/`**: Configuration and manifests for the vLLM server and GPU-accelerated model serving.
-* **`apps/tools/`**: Microservices for external integrations (Google Calendar, Maps, Yelp) with built-in retries and caching.
-* **`pipelines/airflow/`**: DAGs for offline tasks including preference updates, embedding refreshes, and weekly bias checks.
-* **`eval/`**: Golden eval set (~200 examples) and RAGAS scripts used for release gating .
-* **`infra/gcp/`**: Infrastructure as Code (Terraform) for GKE clusters, BigQuery, and Firestore .
-* **`ops/`**: Monitoring runbooks, alert definitions, and Grafana dashboard configurations.
-* **`tests/`**: Unit and integration tests, particularly for data preprocessing and tool schema contracts .
+* **`services/`**: Core business logic for event planning, recommendations, calendar management, logistics coordination, and feedback processing.
+* **`agents/`**: AI agents for planning orchestration and natural language processing.
+* **`api/`**: FastAPI gateway and REST endpoints for users, groups, events, and recommendations.
+  * **`routes/`**: Organized API route handlers.
+* **`database/`**: Data persistence and ORM layer.
+  * **`migrations/`**: Database schema migrations and version control.
+* **`config/`**: Configuration management and environment settings.
+* **`models/`**: Data entities and domain models.
+* **`utils/`**: Helper utilities for calendar operations, distance calculations, and constraint resolution.
+* **`analytics/`**: Success metrics tracking (functional option generation, logistics accuracy, event realization rate, post-event satisfaction).
 
 ---
 
