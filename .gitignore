@@ -32,6 +32,11 @@ htmlcov/
 dmypy.json
 .pyre/
 
+# Virtual env
+venv/
+.venv/
+env/
+
 # Environment
 .env
 .env.local
@@ -92,3 +97,27 @@ data/cache/
 !terraform.tfvars.example
 .terraform.lock.hcl
 *.DS_Store
+# Build
+*.egg-info/
+*.egg
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
