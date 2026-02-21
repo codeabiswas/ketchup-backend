@@ -91,3 +91,4 @@ data/cache/
 *.tfvars
 !terraform.tfvars.example
 .terraform.lock.hcl
+*.DS_Store
