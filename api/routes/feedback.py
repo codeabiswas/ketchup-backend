@@ -1,6 +1,10 @@
+# api/routes/feedback.py
+
 """Post-event feedback routes."""
-from fastapi import APIRouter, HTTPException, Header
+
 from uuid import UUID
+
+from fastapi import APIRouter, Header, HTTPException
 
 from database import db
 from models.schemas import FeedbackCreate
@@ -44,7 +48,9 @@ async def submit_feedback(
         raise HTTPException(status_code=404, detail="Event not found")
 
     if body.rating not in ("loved", "liked", "disliked"):
-        raise HTTPException(status_code=400, detail="Rating must be loved, liked, or disliked")
+        raise HTTPException(
+            status_code=400, detail="Rating must be loved, liked, or disliked"
+        )
 
     row = await db.fetchrow(
         """
@@ -59,7 +65,11 @@ async def submit_feedback(
         body.notes,
         body.attended,
     )
-    return {"feedback_id": str(row["id"]), "rating": row["rating"], "notes": row["notes"]}
+    return {
+        "feedback_id": str(row["id"]),
+        "rating": row["rating"],
+        "notes": row["notes"],
+    }
 
 
 @router.get("/{group_id}/events/{event_id}/feedback")

@@ -1,8 +1,12 @@
+# api/routes/plans.py
+
 """Plan generation and voting routes."""
-from fastapi import APIRouter, HTTPException, Header
-from uuid import UUID
-from datetime import datetime, timedelta
+
 import json
+from datetime import datetime, timedelta
+from uuid import UUID
+
+from fastapi import APIRouter, Header, HTTPException
 
 from database import db
 from models.schemas import VoteRequest
@@ -40,7 +44,9 @@ async def generate_plans(
         group_id,
     )
     if not group or group["lead_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Only group lead can generate plans")
+        raise HTTPException(
+            status_code=403, detail="Only group lead can generate plans"
+        )
 
     voting_deadline = datetime.utcnow() + timedelta(hours=24)
     round_row = await db.fetchrow(
@@ -78,15 +84,17 @@ async def generate_plans(
             "$15-30 per person",
             json.dumps({"driver_view": {}, "passenger_view": {}}),
         )
-        plans_data.append({
-            "id": str(plan_row["id"]),
-            "title": plan_row["title"],
-            "description": plan_row["description"],
-            "vibe_type": plan_row["vibe_type"],
-            "location": plan_row["location"],
-            "venue_name": plan_row["venue_name"],
-            "estimated_cost": plan_row["estimated_cost"],
-        })
+        plans_data.append(
+            {
+                "id": str(plan_row["id"]),
+                "title": plan_row["title"],
+                "description": plan_row["description"],
+                "vibe_type": plan_row["vibe_type"],
+                "location": plan_row["location"],
+                "venue_name": plan_row["venue_name"],
+                "estimated_cost": plan_row["estimated_cost"],
+            }
+        )
 
     return {
         "plan_round_id": str(round_row["id"]),
@@ -140,7 +148,9 @@ async def get_plans(
             }
             for p in plans
         ],
-        "voting_deadline": round_row["voting_deadline"].isoformat() if round_row["voting_deadline"] else None,
+        "voting_deadline": round_row["voting_deadline"].isoformat()
+        if round_row["voting_deadline"]
+        else None,
         "user_logistics": {},
     }
 
@@ -168,7 +178,9 @@ async def submit_vote(
         group_id,
     )
     if not round_row:
-        raise HTTPException(status_code=404, detail="Plan round not found or voting closed")
+        raise HTTPException(
+            status_code=404, detail="Plan round not found or voting closed"
+        )
 
     plans_in_round = await db.fetch(
         "SELECT id FROM plans WHERE plan_round_id = $1",
@@ -190,7 +202,11 @@ async def submit_vote(
         json.dumps([str(r) for r in body.rankings]),
         body.notes,
     )
-    return {"vote_id": "ok", "rankings": [str(r) for r in body.rankings], "notes": body.notes}
+    return {
+        "vote_id": "ok",
+        "rankings": [str(r) for r in body.rankings],
+        "notes": body.notes,
+    }
 
 
 @router.get("/{group_id}/plans/{round_id}/results")
@@ -224,7 +240,11 @@ async def get_voting_results(
 
     first_choices = {}
     for v in votes:
-        ranks = json.loads(v["rankings"]) if isinstance(v["rankings"], str) else v["rankings"]
+        ranks = (
+            json.loads(v["rankings"])
+            if isinstance(v["rankings"], str)
+            else v["rankings"]
+        )
         if ranks:
             fc = ranks[0]
             first_choices[fc] = first_choices.get(fc, 0) + 1
@@ -321,15 +341,17 @@ async def refine_plans(
             "$20-40 per person",
             json.dumps({"driver_view": {}, "passenger_view": {}}),
         )
-        plans_data.append({
-            "id": str(plan_row["id"]),
-            "title": plan_row["title"],
-            "description": plan_row["description"],
-            "vibe_type": plan_row["vibe_type"],
-            "location": plan_row["location"],
-            "venue_name": plan_row["venue_name"],
-            "estimated_cost": plan_row["estimated_cost"],
-        })
+        plans_data.append(
+            {
+                "id": str(plan_row["id"]),
+                "title": plan_row["title"],
+                "description": plan_row["description"],
+                "vibe_type": plan_row["vibe_type"],
+                "location": plan_row["location"],
+                "venue_name": plan_row["venue_name"],
+                "estimated_cost": plan_row["estimated_cost"],
+            }
+        )
 
     return {
         "plan_round_id": str(round_row["id"]),
@@ -374,7 +396,11 @@ async def finalize_plan(
         )
         first_choices = {}
         for v in votes:
-            ranks = json.loads(v["rankings"]) if isinstance(v["rankings"], str) else v["rankings"]
+            ranks = (
+                json.loads(v["rankings"])
+                if isinstance(v["rankings"], str)
+                else v["rankings"]
+            )
             if ranks:
                 fc = ranks[0]
                 first_choices[fc] = first_choices.get(fc, 0) + 1

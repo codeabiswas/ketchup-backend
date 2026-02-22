@@ -1,6 +1,10 @@
+# api/routes/users.py
+
 """User routes."""
-from fastapi import APIRouter, HTTPException, Header
+
 from uuid import UUID
+
+from fastapi import APIRouter, Header, HTTPException
 
 from database import db
 from models.schemas import UserPreferencesUpdate
@@ -29,12 +33,6 @@ async def get_current_user(x_user_id: str | None = Header(None, alias="X-User-Id
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    tokens = await db.fetchrow(
-        "SELECT id FROM google_tokens WHERE user_id = $1",
-        user_id,
-    )
-    google_calendar_connected = tokens is not None
-
     groups = await db.fetch(
         """
         SELECT g.id, g.name, g.lead_id, g.status, gm.role
@@ -61,13 +59,24 @@ async def get_current_user(x_user_id: str | None = Header(None, alias="X-User-Id
         "user_id": str(user["id"]),
         "email": user["email"],
         "name": user["name"],
-        "google_calendar_connected": google_calendar_connected,
+        "google_calendar_connected": False,
         "groups": [
-            {"id": str(g["id"]), "name": g["name"], "lead_id": str(g["lead_id"]), "status": g["status"], "role": g["role"]}
+            {
+                "id": str(g["id"]),
+                "name": g["name"],
+                "lead_id": str(g["lead_id"]),
+                "status": g["status"],
+                "role": g["role"],
+            }
             for g in groups
         ],
         "pending_invites": [
-            {"id": str(i["id"]), "group_id": str(i["group_id"]), "group_name": i["group_name"], "inviter_name": i["inviter_name"]}
+            {
+                "id": str(i["id"]),
+                "group_id": str(i["group_id"]),
+                "group_name": i["group_name"],
+                "inviter_name": i["inviter_name"],
+            }
             for i in invites
         ],
     }
