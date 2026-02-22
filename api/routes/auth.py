@@ -4,8 +4,8 @@
 
 from fastapi import APIRouter
 
-from database import db
 from models.schemas import GoogleSigninRequest, GoogleSigninResponse
+from services import auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -19,27 +19,10 @@ async def google_signin(body: GoogleSigninRequest):
     This ensures every Google-authenticated user has a corresponding row
     in our users table with a stable UUID.
     """
-    email = body.email.strip().lower()
-    row = await db.fetchrow(
-        "SELECT id, email, name FROM users WHERE email = $1",
-        email,
-    )
-    if row:
-        return GoogleSigninResponse(
-            user_id=row["id"],
-            email=row["email"],
-            name=row["name"],
-        )
-
-    row = await db.fetchrow(
-        """
-        INSERT INTO users (email, name, google_id)
-        VALUES ($1, $2, $3)
-        RETURNING id, email, name
-        """,
-        email,
-        body.name or body.email.split("@")[0],
-        body.google_id,
+    row = await auth_service.google_signin(
+        email=body.email,
+        name=body.name,
+        google_id=body.google_id,
     )
     return GoogleSigninResponse(
         user_id=row["id"],
