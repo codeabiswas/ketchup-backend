@@ -4,28 +4,18 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.dependencies import get_current_user_id
 from database import db
 from models.schemas import UserPreferencesUpdate
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
-def _get_user_id(x_user_id: str | None = Header(None, alias="X-User-Id")) -> UUID:
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-Id header required")
-    try:
-        return UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid user ID")
-
-
 @router.get("/me", response_model=dict)
-async def get_current_user(x_user_id: str | None = Header(None, alias="X-User-Id")):
+async def get_current_user(user_id: UUID = Depends(get_current_user_id)):
     """Get current user profile with groups and pending invites."""
-    user_id = _get_user_id(x_user_id)
-
     user = await db.fetchrow(
         "SELECT id, email, name FROM users WHERE id = $1",
         user_id,
@@ -85,7 +75,6 @@ async def get_current_user(x_user_id: str | None = Header(None, alias="X-User-Id
 @router.put("/me/preferences")
 async def update_preferences(
     body: UserPreferencesUpdate,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
     return {"user_id": str(user_id), "preferences": body.model_dump(exclude_none=True)}

@@ -28,8 +28,8 @@ Ketchup is an autonomous social coordination platform designed to solve the "sch
 
 The `ketchup-backend` is organized following modular programming practices to ensure clarity and maintainability .
 
-* **`services/`**: Core business logic for event planning, recommendations, calendar management, logistics coordination, and feedback processing.
-* **`agents/`**: AI agents for planning orchestration and natural language processing.
+* **`agents/`**: Canonical AI orchestration layer (vLLM client lifecycle, tool-calling loops, plan generation).
+* **`services/`**: Non-agent business logic and compatibility shims. `services/planner.py` is deprecated in favor of `agents.planning`.
 * **`api/`**: FastAPI gateway and REST endpoints for users, groups, events, and recommendations.
   * **`routes/`**: Organized API route handlers.
 * **`database/`**: Data persistence and ORM layer.

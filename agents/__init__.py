@@ -1,1 +1,1 @@
-# agents/__init__.py
+"""Agent orchestration surfaces for Ketchup backend."""

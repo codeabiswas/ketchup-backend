@@ -17,6 +17,7 @@ from api.routes import (
     plans,
     users,
 )
+from agents.planning import close_planner_client, init_planner_client
 from config import get_settings
 from database import db
 from utils.invite_expiry import expire_stale_invites_loop
@@ -26,6 +27,7 @@ from utils.invite_expiry import expire_stale_invites_loop
 async def lifespan(app: FastAPI):
     settings = get_settings()
     await db.connect()
+    await init_planner_client()
 
     # Start the invite expiry cron as a background task.
     # Runs every 5 minutes, expires pending invites older than 24 hours.
@@ -39,6 +41,7 @@ async def lifespan(app: FastAPI):
         await expiry_task
     except asyncio.CancelledError:
         pass
+    await close_planner_client()
     await db.disconnect()
 
 

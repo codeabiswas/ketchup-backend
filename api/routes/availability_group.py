@@ -6,20 +6,12 @@ from datetime import datetime, time, timedelta
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.dependencies import get_current_user_id
 from database import db
 
 router = APIRouter(prefix="/api/groups", tags=["availability"])
-
-
-def _get_user_id(x_user_id: str | None = Header(None, alias="X-User-Id")) -> UUID:
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-Id header required")
-    try:
-        return UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid user ID")
 
 
 def _expand_blocks_to_intervals(
@@ -139,16 +131,14 @@ def _find_common_free(
 @router.post("/{group_id}/availability")
 async def compute_group_availability(
     group_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
     time_min: Optional[str] = None,
     time_max: Optional[str] = None,
+    user_id: UUID = Depends(get_current_user_id),
 ):
     """
     Compute common free slots across group members (manual blocks only for local dev).
     time_min, time_max: ISO format, default to next 7 days.
     """
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,

@@ -5,27 +5,17 @@
 from datetime import time
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends
 
+from api.dependencies import get_current_user_id
 from database import db
 from models.schemas import AvailabilityBlocksUpdate
 
 router = APIRouter(prefix="/api/users", tags=["availability"])
 
 
-def _get_user_id(x_user_id: str | None = Header(None, alias="X-User-Id")) -> UUID:
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-Id header required")
-    try:
-        return UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid user ID")
-
-
 @router.get("/me/availability")
-async def get_availability(x_user_id: str | None = Header(None, alias="X-User-Id")):
-    user_id = _get_user_id(x_user_id)
-
+async def get_availability(user_id: UUID = Depends(get_current_user_id)):
     rows = await db.fetch(
         """
         SELECT id, day_of_week, start_time, end_time, label, location
@@ -53,10 +43,8 @@ async def get_availability(x_user_id: str | None = Header(None, alias="X-User-Id
 @router.put("/me/availability")
 async def update_availability(
     body: AvailabilityBlocksUpdate,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     # Replace-all strategy: wipe existing blocks and re-insert the full set.
     await db.execute("DELETE FROM availability_blocks WHERE user_id = $1", user_id)
 

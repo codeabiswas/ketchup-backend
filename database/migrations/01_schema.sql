@@ -117,7 +117,7 @@ CREATE TABLE events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-    plan_round_id UUID NOT NULL REFERENCES plan_rounds(id) ON DELETE CASCADE,
+    plan_round_id UUID NOT NULL UNIQUE REFERENCES plan_rounds(id) ON DELETE CASCADE,
     google_calendar_event_id VARCHAR(255),
     event_date TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
