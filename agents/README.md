@@ -1,16 +1,16 @@
 # vLLM - FastAPI Tool-Calling Service
 
-Small FastAPI service that runs a local vLLM OpenAI-compatible server and adds:
+This folder is the canonical orchestration surface for LLM operations. It includes:
 
-- Tool-enabled chat loop (`web_search`, `maps_text_search`)
-- Simple agent endpoints (`/agent`, `/agent/stream`)
-- OpenAI-style endpoint (`/v1/chat/completions`)
-- Health/readiness checks (`/healthz`, `/readyz`)
+- `planning.py`: planning orchestration used by backend routes (`/generate-plans`, `/refine`)
+- `app/main.py`: optional standalone FastAPI tool-calling service (`/agent`, `/agent/stream`, `/v1/chat/completions`)
+- vLLM health/readiness support (`/healthz`, `/readyz`)
 
 ## Structure
 
 ```text
 .
+├── planning.py           # Canonical planner orchestration for backend modules
 ├── app/
 │   ├── main.py           # FastAPI app + tool-calling loop
 │   ├── entrypoint.sh     # Starts vLLM + FastAPI
@@ -29,8 +29,7 @@ Small FastAPI service that runs a local vLLM OpenAI-compatible server and adds:
 | `VLLM_API_KEY` | `EMPTY` | API key used by OpenAI client to call vLLM |
 | `VLLM_HEALTH_TIMEOUT` | `3` | Timeout (seconds) for readiness ping |
 | `VLLM_INFER_TIMEOUT` | `120` | Timeout (seconds) for inference calls |
-| `MAPS_API_KEY` | empty | Enables Google Places tool |
-| `SERPER_API_KEY` | empty | Enables web search tool |
+| `MAPS_API_KEY` | empty | Enables `search_places` and `get_directions` tools |
 | `VLLM_GPU_MEMORY_UTILIZATION` | `0.70` | vLLM GPU memory fraction |
 | `VLLM_MAX_MODEL_LEN` | `4096` | Max sequence length |
 | `VLLM_MAX_NUM_SEQS` | `4` | Max concurrent sequences |
@@ -50,7 +49,6 @@ docker buildx build \
 ```bash
 docker run --rm -p 8080:8080 \
   -e MAPS_API_KEY="${MAPS_API_KEY}" \
-  -e SERPER_API_KEY="${SERPER_API_KEY}" \
   qwen3-vllm-tools:latest
 ```
 
