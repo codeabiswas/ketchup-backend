@@ -1,7 +1,11 @@
+# database/connection.py
+
 """Database connection and session management."""
-import asyncpg
+
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+
+import asyncpg
 
 from config import get_settings
 

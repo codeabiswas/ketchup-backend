@@ -1,8 +1,12 @@
+# api/routes/availability_group.py
+
 """Group availability - compute common free slots from manual blocks."""
-from fastapi import APIRouter, HTTPException, Header
-from uuid import UUID
-from datetime import datetime, timedelta, time
+
+from datetime import datetime, time, timedelta
 from typing import Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Header, HTTPException
 
 from database import db
 
@@ -43,14 +47,14 @@ def _expand_blocks_to_intervals(
                 start_dt = datetime.combine(current.date(), start_t)
                 end_dt = datetime.combine(current.date(), end_t)
                 if start_dt < time_max and end_dt > time_min:
-                    intervals.append(
-                        (max(start_dt, time_min), min(end_dt, time_max))
-                    )
+                    intervals.append((max(start_dt, time_min), min(end_dt, time_max)))
             current += timedelta(days=1)
     return intervals
 
 
-def _merge_overlapping(intervals: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+def _merge_overlapping(
+    intervals: list[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
     if not intervals:
         return []
     sorted_i = sorted(intervals)
@@ -63,7 +67,9 @@ def _merge_overlapping(intervals: list[tuple[datetime, datetime]]) -> list[tuple
     return merged
 
 
-def _split_slot_by_day(slot_start: datetime, slot_end: datetime, slot_hours: float) -> list[dict]:
+def _split_slot_by_day(
+    slot_start: datetime, slot_end: datetime, slot_hours: float
+) -> list[dict]:
     """Split a long free slot into day-sized chunks so users see options per day."""
     result = []
     current = slot_start
@@ -71,10 +77,12 @@ def _split_slot_by_day(slot_start: datetime, slot_end: datetime, slot_hours: flo
         day_end = current.replace(hour=23, minute=59, second=59, microsecond=999)
         chunk_end = min(day_end, slot_end)
         if (chunk_end - current).total_seconds() >= slot_hours * 3600:
-            result.append({
-                "start": current.isoformat(),
-                "end": chunk_end.isoformat(),
-            })
+            result.append(
+                {
+                    "start": current.isoformat(),
+                    "end": chunk_end.isoformat(),
+                }
+            )
         # Advance to start of next calendar day
         current = datetime.combine(chunk_end.date() + timedelta(days=1), time(0, 0, 0))
     return result
@@ -117,10 +125,12 @@ def _find_common_free(
                 if (t - gap_start).total_seconds() > 24 * 3600:
                     free_slots.extend(_split_slot_by_day(gap_start, t, slot_hours))
                 else:
-                    free_slots.append({
-                        "start": gap_start.isoformat(),
-                        "end": t.isoformat(),
-                    })
+                    free_slots.append(
+                        {
+                            "start": gap_start.isoformat(),
+                            "end": t.isoformat(),
+                        }
+                    )
             gap_start = None
 
     return free_slots[:15]  # Limit to 15 slots (more days visible)
@@ -149,7 +159,11 @@ async def compute_group_availability(
 
     now = datetime.utcnow()
     start = datetime.fromisoformat(time_min.replace("Z", "+00:00")) if time_min else now
-    end = datetime.fromisoformat(time_max.replace("Z", "+00:00")) if time_max else now + timedelta(days=7)
+    end = (
+        datetime.fromisoformat(time_max.replace("Z", "+00:00"))
+        if time_max
+        else now + timedelta(days=7)
+    )
 
     members = await db.fetch(
         "SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active'",
@@ -166,9 +180,7 @@ async def compute_group_availability(
             """,
             m["user_id"],
         )
-        intervals = _expand_blocks_to_intervals(
-            [dict(b) for b in blocks], start, end
-        )
+        intervals = _expand_blocks_to_intervals([dict(b) for b in blocks], start, end)
         all_busy[str(m["user_id"])] = intervals
 
     common_free = _find_common_free(all_busy, start, end)

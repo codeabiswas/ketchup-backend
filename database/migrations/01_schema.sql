@@ -79,7 +79,7 @@ CREATE TABLE plans (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE plan_rounds ADD CONSTRAINT fk_winning_plan 
+ALTER TABLE plan_rounds ADD CONSTRAINT fk_winning_plan
     FOREIGN KEY (winning_plan_id) REFERENCES plans(id);
 
 CREATE TABLE votes (
@@ -99,6 +99,7 @@ CREATE TABLE availability_blocks (
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
     label VARCHAR(255),
+    location VARCHAR(500),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

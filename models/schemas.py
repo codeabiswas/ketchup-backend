@@ -1,7 +1,11 @@
+# models/schemas.py
+
 """Pydantic schemas for API request/response."""
+
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
+
 from pydantic import BaseModel
 
 
@@ -13,23 +17,6 @@ class GoogleSigninRequest(BaseModel):
 
 
 class GoogleSigninResponse(BaseModel):
-    user_id: UUID
-    email: str
-    name: Optional[str] = None
-
-
-class SignupRequest(BaseModel):
-    email: str
-    name: Optional[str] = None
-    password: str
-
-
-class SigninRequest(BaseModel):
-    email: str
-    password: str
-
-
-class AuthResponse(BaseModel):
     user_id: UUID
     email: str
     name: Optional[str] = None
@@ -124,7 +111,8 @@ class AvailabilityBlockCreate(BaseModel):
     day_of_week: int
     start_time: str
     end_time: str
-    label: Optional[str] = None
+    label: Optional[str] = None  # e.g. "Work", "Class"
+    location: Optional[str] = None  # e.g. "Snell Library", "Home"
 
 
 class AvailabilityBlockResponse(BaseModel):
@@ -133,6 +121,7 @@ class AvailabilityBlockResponse(BaseModel):
     start_time: str
     end_time: str
     label: Optional[str] = None
+    location: Optional[str] = None
 
 
 class AvailabilityBlocksUpdate(BaseModel):

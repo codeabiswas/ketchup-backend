@@ -1,12 +1,15 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
-from openai import OpenAI
-import httpx
-import os
+# agents/app/main.py
+
+import asyncio
 import json
 import logging
-import asyncio
+import os
+
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from openai import OpenAI
+from pydantic import BaseModel
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -43,8 +46,16 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "User query like 'coffee near Times Square'"},
-                    "max_results": {"type": "integer", "default": 5, "minimum": 1, "maximum": 10},
+                    "query": {
+                        "type": "string",
+                        "description": "User query like 'coffee near Times Square'",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "default": 5,
+                        "minimum": 1,
+                        "maximum": 10,
+                    },
                 },
                 "required": ["query"],
             },
@@ -59,7 +70,12 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "num_results": {"type": "integer", "default": 5, "minimum": 1, "maximum": 10},
+                    "num_results": {
+                        "type": "integer",
+                        "default": 5,
+                        "minimum": 1,
+                        "maximum": 10,
+                    },
                 },
                 "required": ["query"],
             },
@@ -67,14 +83,17 @@ TOOLS = [
     },
 ]
 
+
 def _vllm_ping():
     # minimal ping: list models
     health_client.models.list()
     return True
 
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
 
 @app.get("/readyz")
 def readyz():
@@ -86,6 +105,7 @@ def readyz():
             status_code=503,
             content={"ready": False, "error": str(e)},
         )
+
 
 async def maps_text_search(query: str, max_results: int = 5):
     if not MAPS_API_KEY:
@@ -110,13 +130,16 @@ async def maps_text_search(query: str, max_results: int = 5):
     places = data.get("places", [])[:max_results]
     out = []
     for p in places:
-        out.append({
-            "name": p.get("displayName", {}).get("text"),
-            "address": p.get("formattedAddress"),
-            "rating": p.get("rating"),
-            "maps_url": p.get("googleMapsUri"),
-        })
+        out.append(
+            {
+                "name": p.get("displayName", {}).get("text"),
+                "address": p.get("formattedAddress"),
+                "rating": p.get("rating"),
+                "maps_url": p.get("googleMapsUri"),
+            }
+        )
     return {"results": out}
+
 
 async def web_search(query: str, num_results: int = 5):
     if not SERPER_API_KEY:
@@ -139,12 +162,15 @@ async def web_search(query: str, num_results: int = 5):
     organic = data.get("organic", [])[:num_results]
     out = []
     for it in organic:
-        out.append({
-            "title": it.get("title"),
-            "link": it.get("link"),
-            "snippet": it.get("snippet"),
-        })
+        out.append(
+            {
+                "title": it.get("title"),
+                "link": it.get("link"),
+                "snippet": it.get("snippet"),
+            }
+        )
     return {"results": out}
+
 
 async def execute_tool(name: str, args: dict):
     if name == "maps_text_search":
@@ -152,6 +178,7 @@ async def execute_tool(name: str, args: dict):
     if name == "web_search":
         return await web_search(**args)
     return {"error": f"Unknown tool: {name}"}
+
 
 async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
     work_messages = list(messages)
@@ -183,11 +210,13 @@ async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
                 "stopped": False,
             }
 
-        work_messages.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
-        })
+        work_messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+            }
+        )
 
         for tc in msg.tool_calls:
             tool_name = tc.function.name
@@ -206,11 +235,13 @@ async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
                 except Exception as e:
                     logger.exception("Tool execution failed")
                     tool_result = {"error": f"Tool execution failed: {str(e)}"}
-            work_messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(tool_result),
-            })
+            work_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(tool_result),
+                }
+            )
 
     return {
         "ok": True,
@@ -219,6 +250,7 @@ async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
         "stopped": True,
     }
 
+
 def _final_stream(messages, model: str = MODEL_NAME):
     return infer_client.chat.completions.create(
         model=model,
@@ -226,6 +258,7 @@ def _final_stream(messages, model: str = MODEL_NAME):
         stream=True,
         temperature=0.2,
     )
+
 
 def _extract_delta_text(delta) -> str:
     if delta is None:
@@ -245,8 +278,10 @@ def _extract_delta_text(delta) -> str:
         return "".join(parts)
     return ""
 
+
 def _sse_data(payload: str) -> str:
     return f"data: {payload}\n\n"
+
 
 async def _agent_sse_stream(messages, model: str = MODEL_NAME):
     try:
@@ -262,14 +297,20 @@ async def _agent_sse_stream(messages, model: str = MODEL_NAME):
             await asyncio.sleep(0)
     except Exception as e:
         logger.exception("Streaming failed")
-        yield _sse_data(json.dumps({"delta": "", "done": True, "error": f"Model stream failed: {str(e)}"}))
+        yield _sse_data(
+            json.dumps(
+                {"delta": "", "done": True, "error": f"Model stream failed: {str(e)}"}
+            )
+        )
         return
     yield _sse_data(json.dumps({"delta": "", "done": True}))
+
 
 async def _agent_sse_text(text: str):
     if text:
         yield _sse_data(json.dumps({"delta": text, "done": False}))
     yield _sse_data(json.dumps({"delta": "", "done": True}))
+
 
 async def _openai_sse_stream(messages, model: str = MODEL_NAME):
     try:
@@ -283,70 +324,104 @@ async def _openai_sse_stream(messages, model: str = MODEL_NAME):
             await asyncio.sleep(0)
     except Exception as e:
         logger.exception("Streaming failed")
-        yield _sse_data(json.dumps({
-            "id": "chatcmpl-local",
-            "object": "chat.completion.chunk",
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {"content": f"Model stream failed: {str(e)}"},
-                "finish_reason": "stop",
-            }],
-        }))
+        yield _sse_data(
+            json.dumps(
+                {
+                    "id": "chatcmpl-local",
+                    "object": "chat.completion.chunk",
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": f"Model stream failed: {str(e)}"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+        )
         yield _sse_data("[DONE]")
         return
     yield _sse_data("[DONE]")
 
+
 async def _openai_sse_text(text: str, model: str = MODEL_NAME):
-    yield _sse_data(json.dumps({
-        "id": "chatcmpl-local",
-        "object": "chat.completion.chunk",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {"role": "assistant"},
-            "finish_reason": None,
-        }],
-    }))
+    yield _sse_data(
+        json.dumps(
+            {
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant"},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+    )
     if text:
-        yield _sse_data(json.dumps({
-            "id": "chatcmpl-local",
-            "object": "chat.completion.chunk",
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {"content": text},
-                "finish_reason": None,
-            }],
-        }))
-    yield _sse_data(json.dumps({
-        "id": "chatcmpl-local",
-        "object": "chat.completion.chunk",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {},
-            "finish_reason": "stop",
-        }],
-    }))
+        yield _sse_data(
+            json.dumps(
+                {
+                    "id": "chatcmpl-local",
+                    "object": "chat.completion.chunk",
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": text},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        )
+    yield _sse_data(
+        json.dumps(
+            {
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+    )
     yield _sse_data("[DONE]")
+
 
 class AgentReq(BaseModel):
     input: str
 
+
 @app.post("/agent")
 async def agent(req: AgentReq):
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Use tools when needed for fresh info or places."},
+        {
+            "role": "system",
+            "content": "You are a helpful assistant. Use tools when needed for fresh info or places.",
+        },
         {"role": "user", "content": req.input},
     ]
     result = await run_tool_loop(messages, model=MODEL_NAME)
     return {"output": result["final_text"]}
 
+
 @app.post("/agent/stream")
 async def agent_stream(req: AgentReq):
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Use tools when needed for fresh info or places."},
+        {
+            "role": "system",
+            "content": "You are a helpful assistant. Use tools when needed for fresh info or places.",
+        },
         {"role": "user", "content": req.input},
     ]
     result = await run_tool_loop(messages, model=MODEL_NAME)
@@ -369,6 +444,7 @@ async def agent_stream(req: AgentReq):
             "X-Accel-Buffering": "no",
         },
     )
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -403,9 +479,11 @@ async def chat_completions(request: Request):
         "id": "chatcmpl-local",
         "object": "chat.completion",
         "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": result["final_text"]},
-            "finish_reason": "stop",
-        }],
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": result["final_text"]},
+                "finish_reason": "stop",
+            }
+        ],
     }

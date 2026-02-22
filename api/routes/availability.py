@@ -1,7 +1,11 @@
+# api/routes/availability.py
+
 """Availability blocks routes."""
-from fastapi import APIRouter, HTTPException, Header
-from uuid import UUID
+
 from datetime import time
+from uuid import UUID
+
+from fastapi import APIRouter, Header, HTTPException
 
 from database import db
 from models.schemas import AvailabilityBlocksUpdate
@@ -24,7 +28,7 @@ async def get_availability(x_user_id: str | None = Header(None, alias="X-User-Id
 
     rows = await db.fetch(
         """
-        SELECT id, day_of_week, start_time, end_time, label
+        SELECT id, day_of_week, start_time, end_time, label, location
         FROM availability_blocks
         WHERE user_id = $1
         ORDER BY day_of_week, start_time
@@ -39,6 +43,7 @@ async def get_availability(x_user_id: str | None = Header(None, alias="X-User-Id
                 "start_time": str(r["start_time"]) if r["start_time"] else None,
                 "end_time": str(r["end_time"]) if r["end_time"] else None,
                 "label": r["label"],
+                "location": r["location"],
             }
             for r in rows
         ],
@@ -52,6 +57,7 @@ async def update_availability(
 ):
     user_id = _get_user_id(x_user_id)
 
+    # Replace-all strategy: wipe existing blocks and re-insert the full set.
     await db.execute("DELETE FROM availability_blocks WHERE user_id = $1", user_id)
 
     blocks = []
@@ -60,22 +66,27 @@ async def update_availability(
         end = time.fromisoformat(b.end_time) if ":" in b.end_time else time(17, 0)
         row = await db.fetchrow(
             """
-            INSERT INTO availability_blocks (user_id, day_of_week, start_time, end_time, label)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, day_of_week, start_time, end_time, label
+            INSERT INTO availability_blocks
+                (user_id, day_of_week, start_time, end_time, label, location)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, day_of_week, start_time, end_time, label, location
             """,
             user_id,
             b.day_of_week,
             start,
             end,
             b.label,
+            b.location,  # ← new: optional location string
         )
-        blocks.append({
-            "id": str(row["id"]),
-            "day_of_week": row["day_of_week"],
-            "start_time": str(row["start_time"]),
-            "end_time": str(row["end_time"]),
-            "label": row["label"],
-        })
+        blocks.append(
+            {
+                "id": str(row["id"]),
+                "day_of_week": row["day_of_week"],
+                "start_time": str(row["start_time"]),
+                "end_time": str(row["end_time"]),
+                "label": row["label"],
+                "location": row["location"],
+            }
+        )
 
     return {"blocks": blocks}
