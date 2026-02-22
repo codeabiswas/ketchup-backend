@@ -5,8 +5,9 @@
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.dependencies import get_current_user_id
 from database import db
 from models.schemas import (
     GroupCreate,
@@ -19,22 +20,11 @@ from utils.email import send_invite_email
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 
 
-def _get_user_id(x_user_id: str | None = Header(None, alias="X-User-Id")) -> UUID:
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-Id header required")
-    try:
-        return UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid user ID")
-
-
 @router.post("", status_code=201)
 async def create_group(
     body: GroupCreate,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     row = await db.fetchrow(
         """
         INSERT INTO groups (name, lead_id)
@@ -62,9 +52,7 @@ async def create_group(
 
 
 @router.get("")
-async def list_groups(x_user_id: str | None = Header(None, alias="X-User-Id")):
-    user_id = _get_user_id(x_user_id)
-
+async def list_groups(user_id: UUID = Depends(get_current_user_id)):
     groups = await db.fetch(
         """
         SELECT g.id, g.name, g.lead_id, g.status
@@ -112,10 +100,8 @@ async def list_groups(x_user_id: str | None = Header(None, alias="X-User-Id")):
 @router.get("/{group_id}")
 async def get_group(
     group_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
@@ -261,11 +247,9 @@ async def get_group(
 async def update_group(
     group_id: UUID,
     body: GroupUpdate,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
     """Update group settings (name)."""
-    user_id = _get_user_id(x_user_id)
-
     lead = await db.fetchrow(
         "SELECT id FROM groups WHERE id = $1 AND lead_id = $2",
         group_id,
@@ -295,10 +279,8 @@ async def update_group(
 async def invite_members(
     group_id: UUID,
     body: GroupInviteRequest,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     if len(body.emails) > 3:
         raise HTTPException(status_code=400, detail="Maximum 3 invites per request")
 
@@ -408,10 +390,8 @@ async def invite_members(
 @router.post("/{group_id}/invite/accept")
 async def accept_invite(
     group_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     user = await db.fetchrow("SELECT email FROM users WHERE id = $1", user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -443,10 +423,8 @@ async def accept_invite(
 @router.post("/{group_id}/invite/reject")
 async def reject_invite(
     group_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     user = await db.fetchrow("SELECT email FROM users WHERE id = $1", user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -466,10 +444,8 @@ async def reject_invite(
 async def update_group_preferences(
     group_id: UUID,
     body: GroupPreferencesUpdate,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,

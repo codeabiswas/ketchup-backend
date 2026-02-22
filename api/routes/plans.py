@@ -6,31 +6,82 @@ import json
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.dependencies import get_current_user_id
+from agents.planning import PlannerError, generate_group_plans
 from database import db
 from models.schemas import VoteRequest
 
 router = APIRouter(prefix="/api/groups", tags=["plans"])
 
 
-def _get_user_id(x_user_id: str | None = Header(None, alias="X-User-Id")) -> UUID:
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-Id header required")
-    try:
-        return UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid user ID")
+async def _insert_generated_plans(
+    round_id: UUID, plans: list[dict]
+) -> list[dict[str, str | None]]:
+    saved: list[dict[str, str | None]] = []
+    for plan in plans:
+        row = await db.fetchrow(
+            """
+            INSERT INTO plans
+                (plan_round_id, title, description, vibe_type, date_time, location, venue_name, estimated_cost, logistics)
+            VALUES
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id, title, description, vibe_type, date_time, location, venue_name, estimated_cost, logistics
+            """,
+            round_id,
+            plan.get("title"),
+            plan.get("description"),
+            plan.get("vibe_type"),
+            plan.get("date_time"),
+            plan.get("location"),
+            plan.get("venue_name"),
+            plan.get("estimated_cost"),
+            json.dumps(plan.get("logistics") or {}),
+        )
+        saved.append(
+            {
+                "id": str(row["id"]),
+                "title": row["title"],
+                "description": row["description"],
+                "vibe_type": row["vibe_type"],
+                "location": row["location"],
+                "venue_name": row["venue_name"],
+                "estimated_cost": row["estimated_cost"],
+            }
+        )
+    return saved
+
+
+def _build_refinement_notes(votes: list) -> str:
+    first_choice_counts: dict[str, int] = {}
+    notes: list[str] = []
+
+    for vote in votes:
+        rankings = (
+            json.loads(vote["rankings"])
+            if isinstance(vote["rankings"], str)
+            else vote["rankings"]
+        )
+        if rankings:
+            first_choice = str(rankings[0])
+            first_choice_counts[first_choice] = first_choice_counts.get(first_choice, 0) + 1
+        if vote["notes"]:
+            notes.append(str(vote["notes"]))
+
+    payload = {
+        "first_choice_counts": first_choice_counts,
+        "notes": notes[:10],
+    }
+    return json.dumps(payload)
 
 
 @router.post("/{group_id}/generate-plans", status_code=201)
 async def generate_plans(
     group_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    """Trigger AI plan generation. Returns mock plans (replace with vLLM when ready)."""
-    user_id = _get_user_id(x_user_id)
-
+    """Trigger AI plan generation via vLLM tool-calling."""
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
@@ -48,53 +99,42 @@ async def generate_plans(
             status_code=403, detail="Only group lead can generate plans"
         )
 
+    max_iter = await db.fetchval(
+        "SELECT COALESCE(MAX(iteration), 0) FROM plan_rounds WHERE group_id = $1",
+        group_id,
+    )
+    iteration = (max_iter or 0) + 1
     voting_deadline = datetime.utcnow() + timedelta(hours=24)
     round_row = await db.fetchrow(
         """
         INSERT INTO plan_rounds (group_id, iteration, status, voting_deadline)
-        VALUES ($1, 1, 'voting_open', $2)
+        VALUES ($1, $2, 'generating', $3)
         RETURNING id, iteration, status
         """,
         group_id,
+        iteration,
         voting_deadline,
     )
 
-    vibe_types = ["anchor", "pivot", "reach", "chill", "wildcard"]
-    titles = [
-        "Cozy Coffee & Board Games",
-        "Bowling Night at Back Bay",
-        "Sunset Picnic at the Park",
-        "Food Truck Tour Downtown",
-        "Escape Room Adventure",
-    ]
-    plans_data = []
-    for vibe, title in zip(vibe_types, titles):
-        plan_row = await db.fetchrow(
-            """
-            INSERT INTO plans (plan_round_id, title, description, vibe_type, location, venue_name, estimated_cost, logistics)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id, title, description, vibe_type, date_time, location, venue_name, estimated_cost, logistics
-            """,
+    try:
+        generated = await generate_group_plans(group_id)
+        plans_data = await _insert_generated_plans(round_row["id"], generated)
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'voting_open' WHERE id = $1",
             round_row["id"],
-            title,
-            f"Fun {vibe} option for the group.",
-            vibe,
-            "Boston, MA",
-            title.split(" at ")[0] if " at " in title else title,
-            "$15-30 per person",
-            json.dumps({"driver_view": {}, "passenger_view": {}}),
         )
-        plans_data.append(
-            {
-                "id": str(plan_row["id"]),
-                "title": plan_row["title"],
-                "description": plan_row["description"],
-                "vibe_type": plan_row["vibe_type"],
-                "location": plan_row["location"],
-                "venue_name": plan_row["venue_name"],
-                "estimated_cost": plan_row["estimated_cost"],
-            }
+    except PlannerError as exc:
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'manual_handoff' WHERE id = $1",
+            round_row["id"],
         )
+        raise HTTPException(status_code=502, detail=f"Plan generation failed: {exc}")
+    except Exception:
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'manual_handoff' WHERE id = $1",
+            round_row["id"],
+        )
+        raise HTTPException(status_code=502, detail="Plan generation failed")
 
     return {
         "plan_round_id": str(round_row["id"]),
@@ -108,10 +148,8 @@ async def generate_plans(
 async def get_plans(
     group_id: UUID,
     round_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
@@ -160,10 +198,8 @@ async def submit_vote(
     group_id: UUID,
     round_id: UUID,
     body: VoteRequest,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
@@ -213,10 +249,8 @@ async def submit_vote(
 async def get_voting_results(
     group_id: UUID,
     round_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
@@ -273,11 +307,9 @@ async def get_voting_results(
 async def refine_plans(
     group_id: UUID,
     round_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
-    """Trigger AI refinement - generates 5 new plans (mock for local)."""
-    user_id = _get_user_id(x_user_id)
-
+    """Trigger AI refinement via vLLM tool-calling and vote feedback."""
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
@@ -292,6 +324,14 @@ async def refine_plans(
     )
     if not group or group["lead_id"] != user_id:
         raise HTTPException(status_code=403, detail="Only group lead can refine")
+
+    current_round = await db.fetchrow(
+        "SELECT id FROM plan_rounds WHERE id = $1 AND group_id = $2",
+        round_id,
+        group_id,
+    )
+    if not current_round:
+        raise HTTPException(status_code=404, detail="Plan round not found")
 
     # Mark current round as manual_handoff or closed
     await db.execute(
@@ -308,7 +348,7 @@ async def refine_plans(
     round_row = await db.fetchrow(
         """
         INSERT INTO plan_rounds (group_id, iteration, status, voting_deadline)
-        VALUES ($1, $2, 'voting_open', $3)
+        VALUES ($1, $2, 'generating', $3)
         RETURNING id, iteration, status
         """,
         group_id,
@@ -316,42 +356,34 @@ async def refine_plans(
         voting_deadline,
     )
 
-    vibe_types = ["anchor", "pivot", "reach", "chill", "wildcard"]
-    titles = [
-        "Trivia Night at Local Pub",
-        "Hiking Trail Adventure",
-        "Potluck Dinner at Park",
-        "Arcade & Pizza Night",
-        "Sunset Kayaking",
-    ]
-    plans_data = []
-    for vibe, title in zip(vibe_types, titles):
-        plan_row = await db.fetchrow(
-            """
-            INSERT INTO plans (plan_round_id, title, description, vibe_type, location, venue_name, estimated_cost, logistics)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id, title, description, vibe_type, location, venue_name, estimated_cost
-            """,
+    vote_rows = await db.fetch(
+        "SELECT rankings, notes FROM votes WHERE plan_round_id = $1",
+        round_id,
+    )
+    refinement_notes = _build_refinement_notes(vote_rows)
+
+    try:
+        generated = await generate_group_plans(
+            group_id,
+            refinement_notes=refinement_notes,
+        )
+        plans_data = await _insert_generated_plans(round_row["id"], generated)
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'voting_open' WHERE id = $1",
             round_row["id"],
-            title,
-            f"Refined {vibe} option.",
-            vibe,
-            "Boston, MA",
-            title.split(" at ")[0] if " at " in title else title,
-            "$20-40 per person",
-            json.dumps({"driver_view": {}, "passenger_view": {}}),
         )
-        plans_data.append(
-            {
-                "id": str(plan_row["id"]),
-                "title": plan_row["title"],
-                "description": plan_row["description"],
-                "vibe_type": plan_row["vibe_type"],
-                "location": plan_row["location"],
-                "venue_name": plan_row["venue_name"],
-                "estimated_cost": plan_row["estimated_cost"],
-            }
+    except PlannerError as exc:
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'manual_handoff' WHERE id = $1",
+            round_row["id"],
         )
+        raise HTTPException(status_code=502, detail=f"Plan refinement failed: {exc}")
+    except Exception:
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'manual_handoff' WHERE id = $1",
+            round_row["id"],
+        )
+        raise HTTPException(status_code=502, detail="Plan refinement failed")
 
     return {
         "plan_round_id": str(round_row["id"]),
@@ -366,11 +398,9 @@ async def refine_plans(
 async def finalize_plan(
     group_id: UUID,
     round_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
     """Create event from winning plan when consensus reached. Lead only."""
-    user_id = _get_user_id(x_user_id)
-
     lead = await db.fetchrow(
         "SELECT id FROM groups WHERE id = $1 AND lead_id = $2",
         group_id,
@@ -386,6 +416,28 @@ async def finalize_plan(
     )
     if not round_row:
         raise HTTPException(status_code=404, detail="Plan round not found")
+
+    existing_event = await db.fetchrow(
+        """
+        SELECT e.id, e.event_date, p.title AS plan_title
+        FROM events e
+        JOIN plans p ON p.id = e.plan_id
+        WHERE e.group_id = $1 AND e.plan_round_id = $2
+        LIMIT 1
+        """,
+        group_id,
+        round_id,
+    )
+    if existing_event:
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'consensus_reached' WHERE id = $1",
+            round_id,
+        )
+        return {
+            "event_id": str(existing_event["id"]),
+            "plan_title": existing_event["plan_title"],
+            "event_date": existing_event["event_date"].isoformat(),
+        }
 
     winning_id = round_row["winning_plan_id"]
     if not winning_id:

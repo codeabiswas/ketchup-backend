@@ -4,21 +4,13 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.dependencies import get_current_user_id
 from database import db
 from models.schemas import FeedbackCreate
 
 router = APIRouter(prefix="/api/groups", tags=["feedback"])
-
-
-def _get_user_id(x_user_id: str | None = Header(None, alias="X-User-Id")) -> UUID:
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-Id header required")
-    try:
-        return UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid user ID")
 
 
 @router.post("/{group_id}/events/{event_id}/feedback", status_code=201)
@@ -26,11 +18,9 @@ async def submit_feedback(
     group_id: UUID,
     event_id: UUID,
     body: FeedbackCreate,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
     """Submit post-event feedback (Loved/Liked/Disliked)."""
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
@@ -76,11 +66,9 @@ async def submit_feedback(
 async def get_feedback(
     group_id: UUID,
     event_id: UUID,
-    x_user_id: str | None = Header(None, alias="X-User-Id"),
+    user_id: UUID = Depends(get_current_user_id),
 ):
     """Get all feedback for an event."""
-    user_id = _get_user_id(x_user_id)
-
     member = await db.fetchrow(
         "SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'",
         group_id,
