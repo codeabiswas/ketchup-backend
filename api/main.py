@@ -5,8 +5,9 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api.routes import (
     auth,
@@ -20,6 +21,7 @@ from api.routes import (
 from agents.planning import close_planner_client, init_planner_client
 from config import get_settings
 from database import db
+from services.errors import ServiceError
 from utils.invite_expiry import expire_stale_invites_loop
 
 
@@ -68,6 +70,11 @@ app.include_router(plans.router)
 app.include_router(availability.router)
 app.include_router(availability_group.router)
 app.include_router(feedback.router)
+
+
+@app.exception_handler(ServiceError)
+async def handle_service_error(_: Request, exc: ServiceError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.get("/health")
