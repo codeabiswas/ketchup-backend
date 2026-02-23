@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+
+# agents/app/entrypoint.sh
 set -euo pipefail
 
 export PORT="${PORT:-8080}"
