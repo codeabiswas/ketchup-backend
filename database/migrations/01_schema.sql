@@ -1,7 +1,7 @@
 -- Ketchup Database Schema - PostgreSQL 16
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
     name VARCHAR(255),
@@ -10,7 +10,7 @@ CREATE TABLE users (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE groups (
+CREATE TABLE IF NOT EXISTS groups (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     lead_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -19,7 +19,7 @@ CREATE TABLE groups (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE group_members (
+CREATE TABLE IF NOT EXISTS group_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -29,7 +29,7 @@ CREATE TABLE group_members (
     UNIQUE(group_id, user_id)
 );
 
-CREATE TABLE group_invites (
+CREATE TABLE IF NOT EXISTS group_invites (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     email VARCHAR(255) NOT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE group_invites (
     UNIQUE(group_id, email)
 );
 
-CREATE TABLE group_preferences (
+CREATE TABLE IF NOT EXISTS group_preferences (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -54,7 +54,7 @@ CREATE TABLE group_preferences (
     UNIQUE(group_id, user_id)
 );
 
-CREATE TABLE plan_rounds (
+CREATE TABLE IF NOT EXISTS plan_rounds (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     iteration INTEGER DEFAULT 1,
@@ -64,7 +64,7 @@ CREATE TABLE plan_rounds (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE plans (
+CREATE TABLE IF NOT EXISTS plans (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     plan_round_id UUID NOT NULL REFERENCES plan_rounds(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
@@ -79,10 +79,18 @@ CREATE TABLE plans (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE plan_rounds ADD CONSTRAINT fk_winning_plan
-    FOREIGN KEY (winning_plan_id) REFERENCES plans(id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_winning_plan'
+  ) THEN
+    ALTER TABLE plan_rounds ADD CONSTRAINT fk_winning_plan
+      FOREIGN KEY (winning_plan_id) REFERENCES plans(id);
+  END IF;
+END $$;
 
-CREATE TABLE votes (
+CREATE TABLE IF NOT EXISTS votes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     plan_round_id UUID NOT NULL REFERENCES plan_rounds(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -92,7 +100,7 @@ CREATE TABLE votes (
     UNIQUE(plan_round_id, user_id)
 );
 
-CREATE TABLE availability_blocks (
+CREATE TABLE IF NOT EXISTS availability_blocks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     day_of_week INTEGER NOT NULL,
@@ -103,7 +111,7 @@ CREATE TABLE availability_blocks (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE google_tokens (
+CREATE TABLE IF NOT EXISTS google_tokens (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     access_token TEXT NOT NULL,
@@ -113,7 +121,7 @@ CREATE TABLE google_tokens (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE events (
+CREATE TABLE IF NOT EXISTS events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
@@ -123,7 +131,7 @@ CREATE TABLE events (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE feedback (
+CREATE TABLE IF NOT EXISTS feedback (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -134,11 +142,11 @@ CREATE TABLE feedback (
     UNIQUE(event_id, user_id)
 );
 
-CREATE INDEX idx_group_members_group ON group_members(group_id);
-CREATE INDEX idx_group_members_user ON group_members(user_id);
-CREATE INDEX idx_plan_rounds_group ON plan_rounds(group_id);
-CREATE INDEX idx_plans_round ON plans(plan_round_id);
-CREATE INDEX idx_votes_round ON votes(plan_round_id);
-CREATE INDEX idx_availability_user ON availability_blocks(user_id);
-CREATE INDEX idx_events_group ON events(group_id);
-CREATE INDEX idx_feedback_event ON feedback(event_id);
+CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_plan_rounds_group ON plan_rounds(group_id);
+CREATE INDEX IF NOT EXISTS idx_plans_round ON plans(plan_round_id);
+CREATE INDEX IF NOT EXISTS idx_votes_round ON votes(plan_round_id);
+CREATE INDEX IF NOT EXISTS idx_availability_user ON availability_blocks(user_id);
+CREATE INDEX IF NOT EXISTS idx_events_group ON events(group_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_event ON feedback(event_id);

@@ -1,1 +1,3 @@
-"""Agent orchestration surfaces for Ketchup backend."""
+"""Agents module for LLM-based coordination and planning."""
+
+__all__ = []

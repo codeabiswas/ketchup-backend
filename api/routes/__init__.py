@@ -1,2 +1,3 @@
-# api/routes/__init__.py
-"""API route handlers."""
+"""Ketchup Backend API Routes."""
+
+__all__ = []

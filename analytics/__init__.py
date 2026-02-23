@@ -1,1 +1,3 @@
-# analytics/__init__.py
+"""Analytics module for hypothesis tracking and metrics."""
+
+__all__ = []
