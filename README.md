@@ -307,7 +307,71 @@ Health:
 
 ## Key Environment Variables
 
-The system uses Airflow DAGs for coordinated data processing:
+- `DATABASE_URL`
+- `VLLM_BASE_URL`
+- `VLLM_MODEL`
+- `VLLM_API_KEY`
+- `PLANNER_FALLBACK_ENABLED`
+- `GOOGLE_MAPS_API_KEY`
+- `TAVILY_API_KEY` (optional; enables web-search fallback)
+- `BACKEND_INTERNAL_API_KEY`
+- `FRONTEND_URL`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`
+
+## Auth Boundary
+
+Most application routes expect:
+- `X-User-Id` (UUID)
+- optional `X-Internal-Auth` when `BACKEND_INTERNAL_API_KEY` is configured
+
+In local stack, frontend proxy injects these headers server-side.
+
+## API Surface (Current)
+
+Auth:
+- `POST /api/auth/google-signin`
+
+Users:
+- `GET /api/users/me`
+- `PUT /api/users/me/preferences`
+- `GET /api/users/me/availability`
+- `PUT /api/users/me/availability`
+
+Groups:
+- `POST /api/groups`
+- `GET /api/groups`
+- `GET /api/groups/{group_id}`
+- `PUT /api/groups/{group_id}`
+- `POST /api/groups/{group_id}/invite`
+- `POST /api/groups/{group_id}/invite/accept`
+- `POST /api/groups/{group_id}/invite/reject`
+- `PUT /api/groups/{group_id}/preferences`
+- `POST /api/groups/{group_id}/availability`
+
+Plans:
+- `POST /api/groups/{group_id}/generate-plans`
+- `GET /api/groups/{group_id}/plans/{round_id}`
+- `POST /api/groups/{group_id}/plans/{round_id}/vote`
+- `GET /api/groups/{group_id}/plans/{round_id}/results`
+- `POST /api/groups/{group_id}/plans/{round_id}/refine`
+- `POST /api/groups/{group_id}/plans/{round_id}/finalize`
+
+Feedback:
+- `POST /api/groups/{group_id}/events/{event_id}/feedback`
+- `GET /api/groups/{group_id}/events/{event_id}/feedback`
+
+## Planner Behavior (Current)
+
+- Planner calls an OpenAI-compatible model via `VLLM_BASE_URL`.
+- With `GOOGLE_MAPS_API_KEY`, planner uses tool grounding for places and directions.
+- With `TAVILY_API_KEY`, planner enables `web_search` as an optional third tool and
+  uses web-grounded fallback when maps search returns no venues.
+- `web_search` is fallback-oriented; it may not be invoked when maps already returns viable venues.
+- If structured planner output fails, backend can synthesize deterministic maps-grounded plans (`maps_fallback`) from gathered tool results.
+- If maps grounding is empty but web fallback yields candidates, backend can synthesize deterministic `web_fallback` plans.
+- If planner fails and `PLANNER_FALLBACK_ENABLED=true`, generic fallback plans can be returned (`fallback`).
+
+## Validation Commands
 
 ```bash
 # Access Airflow UI
@@ -359,3 +423,11 @@ When contributing to Ketchup Backend:
 ## 📧 Contact & Support
 
 For questions or issues, please open a GitHub issue or contact the team leads. See documentation for detailed runbooks and troubleshooting guides.
+Tavily smoke test (inside backend container):
+
+```bash
+docker compose -f ketchup-local/docker-compose.yml exec -T backend env PYTHONPATH=/app \
+  python -c "import asyncio,json; import agents.planning as planning; out=asyncio.run(planning._web_search(query='group activities for friends', location='Boston, MA', max_results=3)); print('ERROR:', out.get('error')); print('RESULT_COUNT:', len(out.get('results', []))); print(json.dumps(out.get('results', [])[:2], indent=2))"
+```
+
+If you use the local Docker stack, prefer running via `ketchup-local/docker-compose.yml`.

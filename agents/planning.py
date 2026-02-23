@@ -8,6 +8,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -74,6 +75,36 @@ PLANNER_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the public web for activity ideas or venues. "
+                "Use when maps search yields no useful venue results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query, e.g. 'indoor activities for groups'.",
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "Optional location context, e.g. 'Boston, MA'.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 SYSTEM_PROMPT_TOOL_GROUNDED = (
@@ -100,6 +131,7 @@ ROUTES_COMPUTE_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 ROUTES_FIELD_MASK = (
     "routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration"
 )
+TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 
 class PlannerError(Exception):
@@ -356,15 +388,18 @@ def _format_member(member: dict[str, Any]) -> str:
     )
 
 
-def _build_fallback_plans(
-    context: dict[str, Any], reason: str, refinement_notes: str | None = None
-) -> list[dict[str, Any]]:
-    base_location = "Boston, MA"
+def _base_location_from_context(context: dict[str, Any]) -> str:
     for member in context["members"]:
         location = member.get("default_location")
         if location:
-            base_location = str(location)
-            break
+            return str(location)
+    return "Boston, MA"
+
+
+def _build_fallback_plans(
+    context: dict[str, Any], reason: str, refinement_notes: str | None = None
+) -> list[dict[str, Any]]:
+    base_location = _base_location_from_context(context)
 
     member_names = [
         str(member.get("name") or member.get("email") or "member")
@@ -529,12 +564,7 @@ def _build_maps_grounded_fallback_plans(
     if not places:
         return None
 
-    base_location = "Boston, MA"
-    for member in context["members"]:
-        location = member.get("default_location")
-        if location:
-            base_location = str(location)
-            break
+    base_location = _base_location_from_context(context)
 
     member_names = [
         str(member.get("name") or member.get("email") or "member")
@@ -582,11 +612,154 @@ def _build_maps_grounded_fallback_plans(
     return plans[:5]
 
 
+def _extract_web_results_from_tool_messages(
+    tool_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for message in tool_messages:
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+
+        payload_results = payload.get("results")
+        if not isinstance(payload_results, list):
+            continue
+
+        for item in payload_results:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            link = str(item.get("link") or "").strip()
+            snippet = str(item.get("snippet") or "").strip()
+            source = str(item.get("source") or "").strip()
+            if not title and not link:
+                continue
+
+            key = (title.lower(), link.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+
+            results.append(
+                {
+                    "title": title,
+                    "link": link,
+                    "snippet": snippet,
+                    "source": source,
+                }
+            )
+    return results
+
+
+def _build_web_grounded_fallback_plans(
+    context: dict[str, Any],
+    web_results: list[dict[str, Any]],
+    reason: str,
+    refinement_notes: str | None = None,
+) -> list[dict[str, Any]] | None:
+    if not web_results:
+        return None
+
+    base_location = _base_location_from_context(context)
+    member_names = [
+        str(member.get("name") or member.get("email") or "member")
+        for member in context["members"]
+    ]
+    reason_short = reason[:180]
+    refinement_short = (refinement_notes or "")[:240]
+
+    plans: list[dict[str, Any]] = []
+    for idx, result in enumerate(web_results[:5]):
+        title = result.get("title") or f"Web Option {idx + 1}"
+        snippet = result.get("snippet") or "Candidate discovered from web search."
+        source = result.get("source") or result.get("link") or "web"
+        plans.append(
+            {
+                "title": str(title)[:120],
+                "description": f"{str(snippet)[:260]}",
+                "vibe_type": DEFAULT_VIBES[idx],
+                "date_time": datetime.utcnow() + timedelta(days=7 + idx),
+                "location": base_location,
+                "venue_name": str(title)[:120],
+                "estimated_cost": "$20-40 per person",
+                "logistics": {
+                    "source": "web_fallback",
+                    "reason": reason_short,
+                    "refinement_notes": refinement_short,
+                    "members": member_names,
+                    "reference": {
+                        "title": result.get("title"),
+                        "link": result.get("link"),
+                        "source": source,
+                    },
+                },
+            }
+        )
+
+    if len(plans) < 5:
+        generic = _build_fallback_plans(
+            context=context,
+            reason=reason,
+            refinement_notes=refinement_notes,
+        )
+        for plan in generic:
+            if len(plans) >= 5:
+                break
+            plans.append(plan)
+
+    return plans[:5]
+
+
+def _build_web_fallback_queries(
+    context: dict[str, Any],
+    refinement_notes: str | None = None,
+) -> list[str]:
+    activity_seeds: list[str] = []
+    seen = set()
+    for member in context["members"]:
+        likes = member.get("activity_likes") or []
+        if not isinstance(likes, list):
+            continue
+        for like in likes:
+            like_s = str(like).strip()
+            if not like_s:
+                continue
+            key = like_s.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            activity_seeds.append(like_s)
+            if len(activity_seeds) >= 3:
+                break
+        if len(activity_seeds) >= 3:
+            break
+
+    if not activity_seeds:
+        activity_seeds = ["things to do", "group activities", "friendly events"]
+
+    if refinement_notes:
+        activity_seeds.append("activities matching group voting feedback")
+
+    return [f"{seed} for friends" for seed in activity_seeds[:3]]
+
+
 def _summarize_tool_results(tool_messages: list[dict[str, Any]]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "tool_calls": 0,
         "place_calls": 0,
         "place_results": 0,
+        "web_calls": 0,
+        "web_results": 0,
         "errors": [],
     }
 
@@ -616,6 +789,11 @@ def _summarize_tool_results(tool_messages: list[dict[str, Any]]) -> dict[str, An
         if isinstance(places, list):
             summary["place_calls"] += 1
             summary["place_results"] += len(places)
+
+        web_results = payload.get("results")
+        if isinstance(web_results, list):
+            summary["web_calls"] += 1
+            summary["web_results"] += len(web_results)
 
     return summary
 
@@ -671,6 +849,7 @@ def _build_prompt(
     context: dict[str, Any],
     refinement_notes: str | None = None,
     require_tool_grounding: bool = True,
+    web_search_enabled: bool = False,
 ) -> str:
     member_lines = "\n".join(_format_member(m) for m in context["members"])
 
@@ -692,6 +871,11 @@ def _build_prompt(
             "1) search_places(query, location) to find real venues.\n"
             "2) get_directions(origin, destination, mode) for each member with known location."
         )
+        if web_search_enabled:
+            grounding_block += (
+                "\n3) If search_places returns zero results, call web_search(query, location) "
+                "to find alternatives."
+            )
         logistics_example = (
             '"per_member": [\n'
             '  {"member": "...", "origin": "...", "duration": "...", "distance": "...", "mode": "..."}\n'
@@ -814,6 +998,154 @@ async def _search_places(query: str, location: str, max_results: int = 3) -> dic
     return {"places": places}
 
 
+async def _web_search(
+    query: str,
+    location: str = "",
+    max_results: int = 5,
+) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.tavily_api_key:
+        return {"error": "TAVILY_API_KEY not set"}
+
+    safe_query = str(query or "").strip()
+    safe_location = str(location or "").strip()
+    if not safe_query:
+        return {"error": "web_search query is required"}
+
+    combined_query = f"{safe_query} in {safe_location}" if safe_location else safe_query
+
+    body: dict[str, Any] = {
+        "query": combined_query,
+        "search_depth": "basic",
+        "max_results": max(1, min(max_results, 10)),
+        "include_answer": False,
+        "include_raw_content": False,
+        "topic": "general",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {settings.tavily_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                TAVILY_SEARCH_URL,
+                headers=headers,
+                json=body,
+            )
+    except httpx.HTTPError as exc:
+        return {
+            "error": f"web_search failed: {exc.__class__.__name__}",
+            "details": str(exc),
+        }
+
+    try:
+        data = response.json()
+    except ValueError:
+        return {
+            "error": f"web_search failed: non-JSON response (HTTP {response.status_code})",
+            "details": response.text[:500],
+        }
+
+    if response.status_code >= 400:
+        message = ""
+        if isinstance(data, dict):
+            message = str(data.get("message") or data.get("error") or "")
+        if not message:
+            message = response.text[:300]
+        return {
+            "error": f"web_search failed: HTTP {response.status_code}",
+            "details": message,
+        }
+
+    organic = data.get("results") if isinstance(data, dict) else None
+    results: list[dict[str, Any]] = []
+    for item in (organic or [])[: max(1, min(max_results, 10))]:
+        if not isinstance(item, dict):
+            continue
+        link = str(item.get("url") or item.get("link") or "").strip()
+        source = urlparse(link).netloc if link else ""
+        results.append(
+            {
+                "title": str(item.get("title") or "").strip(),
+                "link": link,
+                "snippet": str(item.get("content") or item.get("snippet") or "").strip(),
+                "source": source,
+            }
+        )
+
+    return {"results": results}
+
+
+async def _run_deterministic_web_fallback_search(
+    context: dict[str, Any],
+    refinement_notes: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    base_location = _base_location_from_context(context)
+    queries = _build_web_fallback_queries(context, refinement_notes=refinement_notes)
+    results: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    errors: list[str] = []
+
+    for query in queries:
+        payload = await _web_search(query=query, location=base_location, max_results=4)
+        if payload.get("error"):
+            details = str(payload.get("details") or payload["error"])
+            errors.append(f"{payload['error']} ({details[:120]})")
+            continue
+        raw_results = payload.get("results")
+        if not isinstance(raw_results, list):
+            continue
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            link = str(item.get("link") or "").strip()
+            if not title and not link:
+                continue
+            key = (title.lower(), link.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(item)
+            if len(results) >= 8:
+                return results, errors
+
+    return results, errors
+
+
+async def _build_web_fallback_if_available(
+    context: dict[str, Any],
+    tool_messages: list[dict[str, Any]],
+    reason: str,
+    refinement_notes: str | None,
+    enabled: bool,
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    if not enabled:
+        return None, []
+
+    tool_summary = _summarize_tool_results(tool_messages)
+    maps_empty = tool_summary["place_calls"] > 0 and tool_summary["place_results"] == 0
+
+    web_results = _extract_web_results_from_tool_messages(tool_messages)
+    web_errors: list[str] = []
+    if maps_empty and not web_results:
+        web_results, web_errors = await _run_deterministic_web_fallback_search(
+            context=context,
+            refinement_notes=refinement_notes,
+        )
+
+    plans = _build_web_grounded_fallback_plans(
+        context=context,
+        web_results=web_results,
+        reason=reason,
+        refinement_notes=refinement_notes,
+    )
+    return plans, web_errors
+
+
 async def _get_directions(
     origin: str, destination: str, mode: str = "driving"
 ) -> dict[str, Any]:
@@ -917,6 +1249,8 @@ async def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         result = await _search_places(**arguments)
     elif name == "get_directions":
         result = await _get_directions(**arguments)
+    elif name == "web_search":
+        result = await _web_search(**arguments)
     else:
         result = {"error": f"Unknown tool: {name}"}
 
@@ -927,6 +1261,7 @@ async def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
 async def _run_tool_loop(
     messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
     max_rounds: int = MAX_TOOL_ROUNDS,
 ) -> tuple[str, list[dict[str, Any]]]:
     work_messages = list(messages)
@@ -935,7 +1270,7 @@ async def _run_tool_loop(
     for _ in range(max_rounds):
         response = await _call_vllm_chat(
             messages=work_messages,
-            tools=PLANNER_TOOLS,
+            tools=tools,
             tool_choice="auto",
             temperature=0.2,
             max_tokens=MAX_COMPLETION_TOKENS,
@@ -993,18 +1328,20 @@ async def _run_tool_loop(
                     consecutive_all_error_rounds,
                 )
                 summary = _summarize_tool_results(work_messages)
-                if summary["place_results"] > 0:
+                if summary["place_results"] > 0 or summary["web_results"] > 0:
                     # Avoid another expensive generation step when we already have venue grounding.
                     return '{"plans":[]}', work_messages
                 break
 
     summary = _summarize_tool_results(work_messages)
-    if summary["place_results"] > 0:
+    if summary["place_results"] > 0 or summary["web_results"] > 0:
         logger.warning(
-            "Planner collected %s grounded place candidates; skipping extra LLM finalize call.",
+            "Planner collected grounded tool candidates (places=%s web=%s); "
+            "skipping extra LLM finalize call.",
             summary["place_results"],
+            summary["web_results"],
         )
-        # Let caller synthesize deterministic maps-grounded plans.
+        # Let caller synthesize deterministic grounded plans.
         return '{"plans":[]}', work_messages
 
     work_messages.append(
@@ -1060,6 +1397,12 @@ async def generate_group_plans(
     context = await _load_group_context(group_id)
     settings = get_settings()
     use_tool_grounding = bool(settings.google_maps_api_key.strip())
+    use_web_search = bool(settings.tavily_api_key.strip())
+    tools = (
+        PLANNER_TOOLS
+        if use_web_search
+        else [tool for tool in PLANNER_TOOLS if tool["function"]["name"] != "web_search"]
+    )
     system_prompt = (
         SYSTEM_PROMPT_TOOL_GROUNDED if use_tool_grounding else SYSTEM_PROMPT_BEST_EFFORT
     )
@@ -1067,28 +1410,35 @@ async def generate_group_plans(
         context,
         refinement_notes=refinement_notes,
         require_tool_grounding=use_tool_grounding,
+        web_search_enabled=use_web_search,
     )
 
     try:
         tool_messages: list[dict[str, Any]] = []
         if use_tool_grounding:
             logger.warning(
-                "GOOGLE_MAPS_API_KEY detected; generating tool-grounded plans for group %s.",
+                "GOOGLE_MAPS_API_KEY detected; generating tool-grounded plans for group %s "
+                "(web_search=%s).",
                 group_id,
+                "enabled" if use_web_search else "disabled",
             )
             output, tool_messages = await _run_tool_loop(
                 [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
-                ]
+                ],
+                tools=tools,
             )
             tool_summary = _summarize_tool_results(tool_messages)
             logger.warning(
-                "Planner tool summary for group %s: calls=%s place_calls=%s place_results=%s errors=%s",
+                "Planner tool summary for group %s: calls=%s place_calls=%s place_results=%s "
+                "web_calls=%s web_results=%s errors=%s",
                 group_id,
                 tool_summary["tool_calls"],
                 tool_summary["place_calls"],
                 tool_summary["place_results"],
+                tool_summary["web_calls"],
+                tool_summary["web_results"],
                 len(tool_summary["errors"]),
             )
         else:
@@ -1122,12 +1472,26 @@ async def generate_group_plans(
                         group_id,
                     )
                     return synthesized
-                if tool_summary["place_calls"] > 0 and tool_summary["place_results"] == 0:
-                    details = (
-                        "; ".join(tool_summary["errors"][:2])
-                        if tool_summary["errors"]
-                        else "search_places returned zero results"
+                web_synthesized, web_errors = await _build_web_fallback_if_available(
+                    context=context,
+                    tool_messages=tool_messages,
+                    reason=f"LLM produced empty plans: {parse_message}",
+                    refinement_notes=refinement_notes,
+                    enabled=use_web_search,
+                )
+                if web_synthesized:
+                    logger.warning(
+                        "Planner returned no plans for group %s; using web-grounded fallback synthesis.",
+                        group_id,
                     )
+                    return web_synthesized
+                if tool_summary["place_calls"] > 0 and tool_summary["place_results"] == 0:
+                    details_parts: list[str] = []
+                    if tool_summary["errors"]:
+                        details_parts.append("; ".join(tool_summary["errors"][:2]))
+                    if web_errors:
+                        details_parts.append("; ".join(web_errors[:2]))
+                    details = " | ".join(details_parts) or "search_places returned zero results"
                     raise PlannerError(
                         f"LLM returned no plans and map search produced no usable venues ({details})"
                     ) from parse_exc
@@ -1169,6 +1533,19 @@ async def generate_group_plans(
                             group_id,
                         )
                         return synthesized
+                    web_synthesized, _ = await _build_web_fallback_if_available(
+                        context=context,
+                        tool_messages=tool_messages,
+                        reason=f"Structured retry failed: {repaired_exc}",
+                        refinement_notes=refinement_notes,
+                        enabled=use_web_search,
+                    )
+                    if web_synthesized:
+                        logger.warning(
+                            "Structured retry failed for group %s; using web-grounded fallback synthesis.",
+                            group_id,
+                        )
+                        return web_synthesized
                 raise
     except Exception as exc:
         if settings.planner_fallback_enabled:
