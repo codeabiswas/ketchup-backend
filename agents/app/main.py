@@ -1,12 +1,15 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
-from openai import OpenAI
-import httpx
-import os
+# agents/app/main.py
+
+import asyncio
 import json
 import logging
-import asyncio
+import os
+
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from openai import OpenAI
+from pydantic import BaseModel
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -32,49 +35,74 @@ infer_client = OpenAI(
 )
 
 MAPS_API_KEY = os.getenv("MAPS_API_KEY", "")
-SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 
 TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "maps_text_search",
-            "description": "Search places using Google Places Text Search (returns name/address/rating).",
+            "name": "get_directions",
+            "description": "Get travel distance and duration between an origin and destination.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "User query like 'coffee near Times Square'"},
-                    "max_results": {"type": "integer", "default": 5, "minimum": 1, "maximum": 10},
+                    "origin": {
+                        "type": "string",
+                        "description": "Starting address or place.",
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "Destination address or place.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["driving", "transit", "walking"],
+                        "description": "Travel mode.",
+                    },
                 },
-                "required": ["query"],
+                "required": ["origin", "destination"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "web_search",
-            "description": "Web search for up-to-date info; returns top results with titles/snippets/links.",
+            "name": "search_places",
+            "description": "Search venues near a location.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "num_results": {"type": "integer", "default": 5, "minimum": 1, "maximum": 10},
+                    "query": {
+                        "type": "string",
+                        "description": "Venue type query, e.g. 'bowling alley'.",
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "Area to search near, e.g. 'Boston, MA'.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "default": 3,
+                    },
                 },
-                "required": ["query"],
+                "required": ["query", "location"],
             },
         },
     },
 ]
+
 
 def _vllm_ping():
     # minimal ping: list models
     health_client.models.list()
     return True
 
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
 
 @app.get("/readyz")
 def readyz():
@@ -87,71 +115,93 @@ def readyz():
             content={"ready": False, "error": str(e)},
         )
 
-async def maps_text_search(query: str, max_results: int = 5):
+
+async def search_places(query: str, location: str, max_results: int = 3):
     if not MAPS_API_KEY:
         return {"error": "MAPS_API_KEY not set"}
-    url = "https://places.googleapis.com/v1/places:searchText"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": MAPS_API_KEY,
-        # Field masks are required for Text Search (New). :contentReference[oaicite:7]{index=7}
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.rating,places.googleMapsUri",
-    }
-    payload = {"textQuery": query, "maxResultCount": max_results}
+
     try:
-        async with httpx.AsyncClient(timeout=20) as http:
-            r = await http.post(url, headers=headers, json=payload)
-            r.raise_for_status()
-            data = r.json()
-    except httpx.HTTPError as e:
-        logger.exception("maps_text_search failed")
-        return {"error": f"maps_text_search failed: {e.__class__.__name__}: {str(e)}"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(
+                "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                params={
+                    "query": f"{query} near {location}",
+                    "key": MAPS_API_KEY,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPError as exc:
+        logger.exception("search_places failed")
+        return {
+            "error": f"search_places failed: {exc.__class__.__name__}",
+            "details": str(exc),
+        }
 
-    places = data.get("places", [])[:max_results]
-    out = []
-    for p in places:
-        out.append({
-            "name": p.get("displayName", {}).get("text"),
-            "address": p.get("formattedAddress"),
-            "rating": p.get("rating"),
-            "maps_url": p.get("googleMapsUri"),
-        })
-    return {"results": out}
+    places = []
+    for item in data.get("results", [])[: max(1, min(max_results, 10))]:
+        places.append(
+            {
+                "name": item.get("name"),
+                "address": item.get("formatted_address"),
+                "rating": item.get("rating"),
+                "price_level": item.get("price_level"),
+            }
+        )
+    return {"places": places}
 
-async def web_search(query: str, num_results: int = 5):
-    if not SERPER_API_KEY:
-        return {"error": "SERPER_API_KEY not set"}
-    url = "https://google.serper.dev/search"
-    headers = {
-        "X-API-KEY": SERPER_API_KEY,
-        "Content-Type": "application/json",
-    }
-    payload = {"q": query, "num": num_results}
+
+async def get_directions(origin: str, destination: str, mode: str = "driving"):
+    if not MAPS_API_KEY:
+        return {"error": "MAPS_API_KEY not set"}
+
+    safe_mode = mode if mode in {"driving", "transit", "walking"} else "driving"
+
     try:
-        async with httpx.AsyncClient(timeout=20) as http:
-            r = await http.post(url, headers=headers, json=payload)
-            r.raise_for_status()
-            data = r.json()
-    except httpx.HTTPError as e:
-        logger.exception("web_search failed")
-        return {"error": f"web_search failed: {e.__class__.__name__}: {str(e)}"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(
+                "https://maps.googleapis.com/maps/api/directions/json",
+                params={
+                    "origin": origin,
+                    "destination": destination,
+                    "mode": safe_mode,
+                    "key": MAPS_API_KEY,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPError as exc:
+        logger.exception("get_directions failed")
+        return {
+            "error": f"get_directions failed: {exc.__class__.__name__}",
+            "details": str(exc),
+        }
 
-    organic = data.get("organic", [])[:num_results]
-    out = []
-    for it in organic:
-        out.append({
-            "title": it.get("title"),
-            "link": it.get("link"),
-            "snippet": it.get("snippet"),
-        })
-    return {"results": out}
+    if data.get("status") != "OK" or not data.get("routes"):
+        return {
+            "error": data.get("status", "NO_ROUTE"),
+            "origin": origin,
+            "destination": destination,
+            "mode": safe_mode,
+        }
+
+    leg = data["routes"][0]["legs"][0]
+    return {
+        "origin": leg.get("start_address"),
+        "destination": leg.get("end_address"),
+        "distance": (leg.get("distance") or {}).get("text"),
+        "duration": (leg.get("duration") or {}).get("text"),
+        "mode": safe_mode,
+    }
+
 
 async def execute_tool(name: str, args: dict):
-    if name == "maps_text_search":
-        return await maps_text_search(**args)
-    if name == "web_search":
-        return await web_search(**args)
+    if name == "search_places":
+        return await search_places(**args)
+    if name == "get_directions":
+        return await get_directions(**args)
     return {"error": f"Unknown tool: {name}"}
+
 
 async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
     work_messages = list(messages)
@@ -183,11 +233,13 @@ async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
                 "stopped": False,
             }
 
-        work_messages.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
-        })
+        work_messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+            }
+        )
 
         for tc in msg.tool_calls:
             tool_name = tc.function.name
@@ -206,11 +258,13 @@ async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
                 except Exception as e:
                     logger.exception("Tool execution failed")
                     tool_result = {"error": f"Tool execution failed: {str(e)}"}
-            work_messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(tool_result),
-            })
+            work_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(tool_result),
+                }
+            )
 
     return {
         "ok": True,
@@ -219,6 +273,7 @@ async def run_tool_loop(messages, model: str = MODEL_NAME, max_iters: int = 6):
         "stopped": True,
     }
 
+
 def _final_stream(messages, model: str = MODEL_NAME):
     return infer_client.chat.completions.create(
         model=model,
@@ -226,6 +281,7 @@ def _final_stream(messages, model: str = MODEL_NAME):
         stream=True,
         temperature=0.2,
     )
+
 
 def _extract_delta_text(delta) -> str:
     if delta is None:
@@ -245,8 +301,10 @@ def _extract_delta_text(delta) -> str:
         return "".join(parts)
     return ""
 
+
 def _sse_data(payload: str) -> str:
     return f"data: {payload}\n\n"
+
 
 async def _agent_sse_stream(messages, model: str = MODEL_NAME):
     try:
@@ -262,14 +320,20 @@ async def _agent_sse_stream(messages, model: str = MODEL_NAME):
             await asyncio.sleep(0)
     except Exception as e:
         logger.exception("Streaming failed")
-        yield _sse_data(json.dumps({"delta": "", "done": True, "error": f"Model stream failed: {str(e)}"}))
+        yield _sse_data(
+            json.dumps(
+                {"delta": "", "done": True, "error": f"Model stream failed: {str(e)}"}
+            )
+        )
         return
     yield _sse_data(json.dumps({"delta": "", "done": True}))
+
 
 async def _agent_sse_text(text: str):
     if text:
         yield _sse_data(json.dumps({"delta": text, "done": False}))
     yield _sse_data(json.dumps({"delta": "", "done": True}))
+
 
 async def _openai_sse_stream(messages, model: str = MODEL_NAME):
     try:
@@ -283,70 +347,104 @@ async def _openai_sse_stream(messages, model: str = MODEL_NAME):
             await asyncio.sleep(0)
     except Exception as e:
         logger.exception("Streaming failed")
-        yield _sse_data(json.dumps({
-            "id": "chatcmpl-local",
-            "object": "chat.completion.chunk",
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {"content": f"Model stream failed: {str(e)}"},
-                "finish_reason": "stop",
-            }],
-        }))
+        yield _sse_data(
+            json.dumps(
+                {
+                    "id": "chatcmpl-local",
+                    "object": "chat.completion.chunk",
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": f"Model stream failed: {str(e)}"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+        )
         yield _sse_data("[DONE]")
         return
     yield _sse_data("[DONE]")
 
+
 async def _openai_sse_text(text: str, model: str = MODEL_NAME):
-    yield _sse_data(json.dumps({
-        "id": "chatcmpl-local",
-        "object": "chat.completion.chunk",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {"role": "assistant"},
-            "finish_reason": None,
-        }],
-    }))
+    yield _sse_data(
+        json.dumps(
+            {
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant"},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
+    )
     if text:
-        yield _sse_data(json.dumps({
-            "id": "chatcmpl-local",
-            "object": "chat.completion.chunk",
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {"content": text},
-                "finish_reason": None,
-            }],
-        }))
-    yield _sse_data(json.dumps({
-        "id": "chatcmpl-local",
-        "object": "chat.completion.chunk",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {},
-            "finish_reason": "stop",
-        }],
-    }))
+        yield _sse_data(
+            json.dumps(
+                {
+                    "id": "chatcmpl-local",
+                    "object": "chat.completion.chunk",
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": text},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        )
+    yield _sse_data(
+        json.dumps(
+            {
+                "id": "chatcmpl-local",
+                "object": "chat.completion.chunk",
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+    )
     yield _sse_data("[DONE]")
+
 
 class AgentReq(BaseModel):
     input: str
 
+
 @app.post("/agent")
 async def agent(req: AgentReq):
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Use tools when needed for fresh info or places."},
+        {
+            "role": "system",
+            "content": "You are a helpful assistant. Use tools when needed for venue search and travel logistics.",
+        },
         {"role": "user", "content": req.input},
     ]
     result = await run_tool_loop(messages, model=MODEL_NAME)
     return {"output": result["final_text"]}
 
+
 @app.post("/agent/stream")
 async def agent_stream(req: AgentReq):
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Use tools when needed for fresh info or places."},
+        {
+            "role": "system",
+            "content": "You are a helpful assistant. Use tools when needed for venue search and travel logistics.",
+        },
         {"role": "user", "content": req.input},
     ]
     result = await run_tool_loop(messages, model=MODEL_NAME)
@@ -369,6 +467,7 @@ async def agent_stream(req: AgentReq):
             "X-Accel-Buffering": "no",
         },
     )
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
@@ -403,9 +502,11 @@ async def chat_completions(request: Request):
         "id": "chatcmpl-local",
         "object": "chat.completion",
         "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {"role": "assistant", "content": result["final_text"]},
-            "finish_reason": "stop",
-        }],
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": result["final_text"]},
+                "finish_reason": "stop",
+            }
+        ],
     }
