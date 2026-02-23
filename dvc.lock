@@ -1,0 +1,86 @@
+schema: '2.0'
+stages:
+  acquire_data:
+    cmd: python scripts/acquire_data.py
+    deps:
+    - path: scripts/acquire_data.py
+      hash: md5
+      md5: 92a4df5279ebcb6b3cfe2d9ddcaae289
+      size: 2192
+    outs:
+    - path: data/metrics/acquisition_metrics.json
+      hash: md5
+      md5: c0b32c0222ed4da1b5b9174c166ef757
+      size: 112
+    - path: data/raw/calendar_data.csv
+      hash: md5
+      md5: 797fbe37dea818582f816da3786b6f8e
+      size: 2546
+  preprocess_data:
+    cmd: python scripts/preprocess_data.py
+    deps:
+    - path: data/raw/calendar_data.csv
+      hash: md5
+      md5: 797fbe37dea818582f816da3786b6f8e
+      size: 2546
+    - path: scripts/preprocess_data.py
+      hash: md5
+      md5: 0cee92986f3b505334f14a3aea2ed0a6
+      size: 2485
+    outs:
+    - path: data/metrics/preprocessing_metrics.json
+      hash: md5
+      md5: 0977e321d97a782fadcb234837dbb086
+      size: 119
+    - path: data/processed/calendar_processed.csv
+      hash: md5
+      md5: 521718f60f72aeb43e46abec8a0372cf
+      size: 5472
+  validate_data:
+    cmd: python scripts/validate_data.py
+    deps:
+    - path: data/processed/calendar_processed.csv
+      hash: md5
+      md5: 521718f60f72aeb43e46abec8a0372cf
+      size: 5472
+    - path: scripts/validate_data.py
+      hash: md5
+      md5: 35926433f2d91f074ef46ee3a5ee7f4c
+      size: 1926
+    outs:
+    - path: data/reports/validation_report.json
+      hash: md5
+      md5: 0784d3eb81eb6648069350c4851feba2
+      size: 333
+  detect_anomalies:
+    cmd: python scripts/detect_anomalies.py
+    deps:
+    - path: data/processed/calendar_processed.csv
+      hash: md5
+      md5: 521718f60f72aeb43e46abec8a0372cf
+      size: 5472
+    - path: scripts/detect_anomalies.py
+      hash: md5
+      md5: e7a1038dd1895360cbf6f8f27ae0bae5
+      size: 1678
+    outs:
+    - path: data/reports/anomaly_report.json
+      hash: md5
+      md5: 85169b8b650c555fb83d7dd60b60b38d
+      size: 463
+  detect_bias:
+    cmd: python scripts/detect_bias.py
+    deps:
+    - path: data/processed/calendar_processed.csv
+      hash: md5
+      md5: 521718f60f72aeb43e46abec8a0372cf
+      size: 5472
+    - path: scripts/detect_bias.py
+      hash: md5
+      md5: 5a7ca6646cbba5054bb9acdf0cb856ca
+      size: 2342
+    outs:
+    - path: data/reports/bias_report.json
+      hash: md5
+      md5: 8bc98d688cf87a110f35d700ee956c28
+      size: 5972

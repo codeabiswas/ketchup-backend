@@ -1,0 +1,238 @@
+{
+  "generated_at": "2026-02-21T23:53:11.017669",
+  "bias_metrics": [
+    {
+      "slice": "availability_category=low",
+      "metric": "selection_rate",
+      "value": 0.0,
+      "threshold": 0.05,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=very_high",
+      "metric": "selection_rate",
+      "value": 1.0,
+      "threshold": 0.05,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=nan",
+      "metric": "selection_rate",
+      "value": 0.0,
+      "threshold": 0.05,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=high",
+      "metric": "selection_rate",
+      "value": 1.0,
+      "threshold": 0.05,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=medium",
+      "metric": "selection_rate",
+      "value": 0.0625,
+      "threshold": 0.05,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=low",
+      "metric": "TPR",
+      "value": 0.0,
+      "threshold": 0.1,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=low",
+      "metric": "FPR",
+      "value": 0.0,
+      "threshold": 0.1,
+      "is_biased": false
+    },
+    {
+      "slice": "availability_category=very_high",
+      "metric": "TPR",
+      "value": 1.0,
+      "threshold": 0.1,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=very_high",
+      "metric": "FPR",
+      "value": 0.0,
+      "threshold": 0.1,
+      "is_biased": false
+    },
+    {
+      "slice": "availability_category=nan",
+      "metric": "TPR",
+      "value": 0.0,
+      "threshold": 0.1,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=nan",
+      "metric": "FPR",
+      "value": 0.0,
+      "threshold": 0.1,
+      "is_biased": false
+    },
+    {
+      "slice": "availability_category=high",
+      "metric": "TPR",
+      "value": 1.0,
+      "threshold": 0.1,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=high",
+      "metric": "FPR",
+      "value": 0.0,
+      "threshold": 0.1,
+      "is_biased": false
+    },
+    {
+      "slice": "availability_category=medium",
+      "metric": "TPR",
+      "value": 1.0,
+      "threshold": 0.1,
+      "is_biased": true
+    },
+    {
+      "slice": "availability_category=medium",
+      "metric": "FPR",
+      "value": 0.0,
+      "threshold": 0.1,
+      "is_biased": false
+    }
+  ],
+  "mitigation_report": {
+    "bias_detected": true,
+    "biased_slices": [
+      "availability_category=high",
+      "availability_category=low",
+      "availability_category=medium",
+      "availability_category=nan",
+      "availability_category=very_high"
+    ],
+    "total_slices_analyzed": 5,
+    "metrics": [
+      {
+        "slice": "availability_category=low",
+        "metric": "selection_rate",
+        "value": 0.0,
+        "threshold": 0.05,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=very_high",
+        "metric": "selection_rate",
+        "value": 1.0,
+        "threshold": 0.05,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=nan",
+        "metric": "selection_rate",
+        "value": 0,
+        "threshold": 0.05,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=high",
+        "metric": "selection_rate",
+        "value": 1.0,
+        "threshold": 0.05,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=medium",
+        "metric": "selection_rate",
+        "value": 0.0625,
+        "threshold": 0.05,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=low",
+        "metric": "TPR",
+        "value": 0,
+        "threshold": 0.1,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=low",
+        "metric": "FPR",
+        "value": 0.0,
+        "threshold": 0.1,
+        "is_biased": false
+      },
+      {
+        "slice": "availability_category=very_high",
+        "metric": "TPR",
+        "value": 1.0,
+        "threshold": 0.1,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=very_high",
+        "metric": "FPR",
+        "value": 0,
+        "threshold": 0.1,
+        "is_biased": false
+      },
+      {
+        "slice": "availability_category=nan",
+        "metric": "TPR",
+        "value": 0,
+        "threshold": 0.1,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=nan",
+        "metric": "FPR",
+        "value": 0,
+        "threshold": 0.1,
+        "is_biased": false
+      },
+      {
+        "slice": "availability_category=high",
+        "metric": "TPR",
+        "value": 1.0,
+        "threshold": 0.1,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=high",
+        "metric": "FPR",
+        "value": 0,
+        "threshold": 0.1,
+        "is_biased": false
+      },
+      {
+        "slice": "availability_category=medium",
+        "metric": "TPR",
+        "value": 1.0,
+        "threshold": 0.1,
+        "is_biased": true
+      },
+      {
+        "slice": "availability_category=medium",
+        "metric": "FPR",
+        "value": 0.0,
+        "threshold": 0.1,
+        "is_biased": false
+      }
+    ],
+    "recommendations": [
+      "Consider resampling to balance availability_category",
+      "Consider resampling to balance availability_category",
+      "Consider resampling to balance availability_category",
+      "Consider resampling to balance availability_category",
+      "Consider resampling to balance availability_category",
+      "Use stratified sampling in data preparation",
+      "Apply fairness constraints during model training",
+      "Monitor equalized odds during evaluation"
+    ]
+  }
+}

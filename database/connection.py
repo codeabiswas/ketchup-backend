@@ -3,6 +3,7 @@
 """Database connection and session management."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 import asyncpg
@@ -24,11 +25,30 @@ class Database:
             max_size=10,
             command_timeout=60,
         )
+        await self.run_migrations()
 
     async def disconnect(self) -> None:
         if self.pool:
             await self.pool.close()
             self.pool = None
+
+    async def run_migrations(self) -> None:
+        """Execute all migration SQL files in order."""
+        if not self.pool:
+            raise RuntimeError("Database pool not initialized")
+
+        migrations_dir = Path(__file__).parent / "migrations"
+        migration_files = sorted(migrations_dir.glob("*.sql"))
+
+        async with self.pool.acquire() as conn:
+            for migration_file in migration_files:
+                migration_sql = migration_file.read_text()
+                try:
+                    await conn.execute(migration_sql)
+                    print(f"Executed migration: {migration_file.name}")
+                except Exception as e:
+                    print(f"Migration {migration_file.name} failed: {e}")
+                    raise
 
     @asynccontextmanager
     async def acquire(self) -> AsyncGenerator[asyncpg.Connection, None]:

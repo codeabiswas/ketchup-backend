@@ -1,0 +1,414 @@
+"""Data preprocessing pipeline components for Ketchup backend."""
+
+import json
+import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+class DataCleaner:
+    """Handles data cleaning operations."""
+
+    @staticmethod
+    def remove_duplicates(df: pd.DataFrame, subset: List[str] = None) -> pd.DataFrame:
+        """
+        Remove duplicate rows from DataFrame.
+
+        Args:
+            df: Input DataFrame
+            subset: Column names to consider for duplicates
+
+        Returns:
+            DataFrame with duplicates removed
+        """
+        initial_rows = len(df)
+        df_cleaned = df.drop_duplicates(subset=subset, keep="first")
+        removed = initial_rows - len(df_cleaned)
+
+        logger.info(f"Removed {removed} duplicate rows (kept {len(df_cleaned)})")
+        return df_cleaned
+
+    @staticmethod
+    def handle_missing_values(
+        df: pd.DataFrame,
+        strategy: str = "drop",
+        fill_value: Any = None,
+    ) -> pd.DataFrame:
+        """
+        Handle missing values in DataFrame.
+
+        Args:
+            df: Input DataFrame
+            strategy: 'drop', 'forward_fill', 'backward_fill', or 'fill'
+            fill_value: Value to use if strategy is 'fill'
+
+        Returns:
+            DataFrame with missing values handled
+        """
+        missing_before = df.isnull().sum().sum()
+
+        if strategy == "drop":
+            df_cleaned = df.dropna()
+        elif strategy == "forward_fill":
+            df_cleaned = df.fillna(method="ffill")
+        elif strategy == "backward_fill":
+            df_cleaned = df.fillna(method="bfill")
+        elif strategy == "fill":
+            df_cleaned = df.fillna(fill_value)
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
+
+        missing_after = df_cleaned.isnull().sum().sum()
+        logger.info(
+            f"Handled missing values: {missing_before} -> {missing_after} "
+            f"using strategy '{strategy}'",
+        )
+        return df_cleaned
+
+    @staticmethod
+    def remove_outliers(
+        df: pd.DataFrame,
+        column: str,
+        method: str = "iqr",
+        threshold: float = 1.5,
+    ) -> pd.DataFrame:
+        """
+        Remove outliers from a specific column.
+
+        Args:
+            df: Input DataFrame
+            column: Column name to check for outliers
+            method: 'iqr' or 'zscore'
+            threshold: IQR multiplier or Z-score threshold
+
+        Returns:
+            DataFrame with outliers removed
+        """
+        initial_rows = len(df)
+
+        if method == "iqr":
+            Q1 = df[column].quantile(0.25)
+            Q3 = df[column].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - threshold * IQR
+            upper_bound = Q3 + threshold * IQR
+            df_cleaned = df[(df[column] >= lower_bound) & (df[column] <= upper_bound)]
+
+        elif method == "zscore":
+            from scipy import stats
+
+            z_scores = np.abs(stats.zscore(df[column].dropna()))
+            df_cleaned = df[z_scores < threshold]
+        else:
+            raise ValueError(f"Unknown method: {method}")
+
+        removed = initial_rows - len(df_cleaned)
+        logger.info(f"Removed {removed} outliers using {method} method")
+        return df_cleaned
+
+
+class DataTransformer:
+    """Handles data transformation operations."""
+
+    @staticmethod
+    def normalize_numeric(
+        df: pd.DataFrame,
+        columns: List[str],
+        method: str = "minmax",
+    ) -> pd.DataFrame:
+        """
+        Normalize numeric columns.
+
+        Args:
+            df: Input DataFrame
+            columns: List of columns to normalize
+            method: 'minmax' (0-1) or 'zscore'
+
+        Returns:
+            DataFrame with normalized columns
+        """
+        df_transformed = df.copy()
+
+        for col in columns:
+            if method == "minmax":
+                min_val = df_transformed[col].min()
+                max_val = df_transformed[col].max()
+                df_transformed[col] = (df_transformed[col] - min_val) / (
+                    max_val - min_val
+                )
+
+            elif method == "zscore":
+                mean_val = df_transformed[col].mean()
+                std_val = df_transformed[col].std()
+                df_transformed[col] = (df_transformed[col] - mean_val) / std_val
+            else:
+                raise ValueError(f"Unknown normalization method: {method}")
+
+        logger.info(f"Normalized {len(columns)} columns using {method} method")
+        return df_transformed
+
+    @staticmethod
+    def encode_categorical(
+        df: pd.DataFrame,
+        columns: List[str],
+        method: str = "onehot",
+    ) -> pd.DataFrame:
+        """
+        Encode categorical columns.
+
+        Args:
+            df: Input DataFrame
+            columns: List of categorical columns to encode
+            method: 'onehot' or 'label'
+
+        Returns:
+            DataFrame with encoded columns
+        """
+        df_transformed = df.copy()
+
+        if method == "onehot":
+            df_transformed = pd.get_dummies(
+                df_transformed,
+                columns=columns,
+                drop_first=True,
+            )
+        elif method == "label":
+            from sklearn.preprocessing import LabelEncoder
+
+            le_dict = {}
+            for col in columns:
+                le = LabelEncoder()
+                df_transformed[col] = le.fit_transform(df_transformed[col].astype(str))
+                le_dict[col] = le
+        else:
+            raise ValueError(f"Unknown encoding method: {method}")
+
+        logger.info(f"Encoded {len(columns)} categorical columns using {method} method")
+        return df_transformed
+
+    @staticmethod
+    def create_temporal_features(
+        df: pd.DataFrame,
+        date_column: str,
+    ) -> pd.DataFrame:
+        """
+        Create temporal features from a date column.
+
+        Args:
+            df: Input DataFrame
+            date_column: Name of date column
+
+        Returns:
+            DataFrame with temporal features added
+        """
+        df_transformed = df.copy()
+        df_transformed[date_column] = pd.to_datetime(df_transformed[date_column])
+
+        df_transformed[f"{date_column}_year"] = df_transformed[date_column].dt.year
+        df_transformed[f"{date_column}_month"] = df_transformed[date_column].dt.month
+        df_transformed[f"{date_column}_day"] = df_transformed[date_column].dt.day
+        df_transformed[f"{date_column}_dayofweek"] = df_transformed[
+            date_column
+        ].dt.dayofweek
+        df_transformed[f"{date_column}_quarter"] = df_transformed[
+            date_column
+        ].dt.quarter
+        df_transformed[f"{date_column}_is_weekend"] = (
+            df_transformed[date_column].dt.dayofweek >= 5
+        ).astype(int)
+
+        logger.info(f"Created temporal features from {date_column}")
+        return df_transformed
+
+
+class DataAggregator:
+    """Aggregates data from multiple sources."""
+
+    @staticmethod
+    def aggregate_calendar_data(calendar_records: List[Dict]) -> pd.DataFrame:
+        """
+        Aggregate calendar data into a structured format.
+
+        Args:
+            calendar_records: List of calendar data records
+
+        Returns:
+            Aggregated DataFrame with calendar statistics
+        """
+        aggregated = []
+
+        for record in calendar_records:
+            user_id = record.get("user_id")
+            busy_intervals = record.get("busy_intervals", [])
+            availability_pct = record.get("availability_percentage", 0)
+
+            aggregated.append(
+                {
+                    "user_id": user_id,
+                    "num_busy_intervals": len(busy_intervals),
+                    "availability_percentage": availability_pct,
+                    "total_busy_hours": sum(
+                        (
+                            datetime.fromisoformat(interval["end"])
+                            - datetime.fromisoformat(interval["start"])
+                        ).total_seconds()
+                        / 3600
+                        for interval in busy_intervals
+                    ),
+                    "last_updated": datetime.now().isoformat(),
+                },
+            )
+
+        df_aggregated = pd.DataFrame(aggregated)
+        logger.info(f"Aggregated calendar data for {len(aggregated)} users")
+        return df_aggregated
+
+    @staticmethod
+    def aggregate_venue_data(venue_records: List[Dict]) -> pd.DataFrame:
+        """
+        Aggregate venue data into a structured format.
+
+        Args:
+            venue_records: List of venue data records
+
+        Returns:
+            Aggregated DataFrame with venue statistics
+        """
+        aggregated = []
+
+        for venue in venue_records:
+            aggregated.append(
+                {
+                    "venue_id": venue.get("venue_id"),
+                    "name": venue.get("name"),
+                    "category": venue.get("category"),
+                    "rating": venue.get("rating", 0),
+                    "price_level": venue.get("price_level", 0),
+                    "latitude": venue.get("location", {}).get("latitude"),
+                    "longitude": venue.get("location", {}).get("longitude"),
+                    "review_count": venue.get("review_count", 0),
+                    "last_updated": datetime.now().isoformat(),
+                },
+            )
+
+        df_aggregated = pd.DataFrame(aggregated)
+        logger.info(f"Aggregated venue data for {len(aggregated)} venues")
+        return df_aggregated
+
+    @staticmethod
+    def aggregate_group_preferences(preference_records: List[Dict]) -> pd.DataFrame:
+        """
+        Aggregate group preference data.
+
+        Args:
+            preference_records: List of preference records
+
+        Returns:
+            Aggregated DataFrame with group preference statistics
+        """
+        aggregated = []
+
+        for record in preference_records:
+            group_id = record.get("group_id")
+            members = record.get("members", [])
+            preferences = record.get("preferences", {})
+
+            aggregated.append(
+                {
+                    "group_id": group_id,
+                    "num_members": len(members),
+                    "avg_price_level": preferences.get("avg_price_level", 0),
+                    "preferred_categories": json.dumps(
+                        preferences.get("categories", []),
+                    ),
+                    "dietary_restrictions": json.dumps(preferences.get("dietary", [])),
+                    "max_travel_distance_km": preferences.get("max_distance_km", 0),
+                    "last_updated": datetime.now().isoformat(),
+                },
+            )
+
+        df_aggregated = pd.DataFrame(aggregated)
+        logger.info(f"Aggregated preferences for {len(aggregated)} groups")
+        return df_aggregated
+
+
+class FeatureEngineer:
+    """Feature engineering operations."""
+
+    @staticmethod
+    def create_venue_features(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create venue-specific features.
+
+        Args:
+            df: DataFrame with venues
+
+        Returns:
+            DataFrame with engineered venue features
+        """
+        df_features = df.copy()
+
+        # Rating bucket
+        df_features["rating_bucket"] = pd.cut(
+            df_features["rating"],
+            bins=[0, 2, 3, 4, 5],
+            labels=["low", "medium", "high", "excellent"],
+        )
+
+        # Price to quality ratio
+        df_features["price_quality_ratio"] = df_features["price_level"] / (
+            df_features["rating"] + 1
+        )
+
+        # Popularity score (review count normalized)
+        df_features["popularity_score"] = (
+            df_features["review_count"] / df_features["review_count"].max()
+        )
+
+        # Composite quality score
+        df_features["quality_score"] = (
+            0.6 * (df_features["rating"] / 5)
+            + 0.3 * df_features["popularity_score"]
+            + 0.1 * (5 - df_features["price_level"]) / 4
+        )
+
+        logger.info("Created venue features")
+        return df_features
+
+    @staticmethod
+    def create_availability_features(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create availability-specific features.
+
+        Args:
+            df: DataFrame with availability data
+
+        Returns:
+            DataFrame with engineered availability features
+        """
+        df_features = df.copy()
+
+        # Availability category
+        df_features["availability_category"] = pd.cut(
+            df_features["availability_percentage"],
+            bins=[0, 25, 50, 75, 100],
+            labels=["low", "medium", "high", "very_high"],
+        )
+
+        # Busy intensity
+        df_features["busy_intensity"] = df_features["num_busy_intervals"] / (
+            df_features["total_busy_hours"] + 1
+        )
+
+        # Availability score (inverse of busyness)
+        df_features["availability_score"] = 1 - (
+            df_features["availability_percentage"] / 100
+        )
+
+        logger.info("Created availability features")
+        return df_features

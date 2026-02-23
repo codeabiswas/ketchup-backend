@@ -1,0 +1,175 @@
+services:
+  # Firestore Emulator for local development
+  firestore-emulator:
+    image: google/cloud-sdk:latest
+    container_name: ketchup-firestore
+    ports:
+      - "8080:8080"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        apt-get update
+        apt-get install -y wget apt-transport-https gnupg curl
+        wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /usr/share/keyrings/adoptium-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/adoptium-archive-keyring.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" | tee /etc/apt/sources.list.d/adoptium.list
+        apt-get update
+        apt-get install -y temurin-21-jre
+        gcloud beta emulators firestore start --host-port=0.0.0.0:8080
+    environment:
+      - FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: ketchup-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL for Ops Data
+  postgres:
+    image: postgres:15-alpine
+    container_name: ketchup-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ketchup_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL for Airflow Metadata
+  airflow-postgres:
+    image: postgres:15-alpine
+    container_name: ketchup-airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Airflow Webserver
+  airflow-webserver:
+    image: apache/airflow:2.7.2-python3.11
+    container_name: ketchup-airflow-webserver
+    command: webserver
+    ports:
+      - "8081:8080"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__SECRET_KEY=ketchup_secret_key_change_in_production
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/pipelines/airflow/dags
+    volumes:
+      - .:/opt/airflow
+      - airflow-logs:/opt/airflow/logs
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Airflow Scheduler
+  airflow-scheduler:
+    image: apache/airflow:2.7.2-python3.11
+    container_name: ketchup-airflow-scheduler
+    command: scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/pipelines/airflow/dags
+    volumes:
+      - .:/opt/airflow
+      - airflow-logs:/opt/airflow/logs
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Airflow Init (DB migrations)
+  airflow-init:
+    image: apache/airflow:2.7.2-python3.11
+    container_name: ketchup-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@ketchup.com --password admin
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+
+  # FastAPI Backend
+  backend:
+    build: .
+    container_name: ketchup-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/ketchup_db
+      - REDIS_URL=redis://redis:6379
+      - FIRESTORE_EMULATOR_HOST=firestore-emulator:8080
+    volumes:
+      - .:/app
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      firestore-emulator:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  postgres-data:
+  airflow-postgres-data:
+  airflow-logs:
+
+networks:
+  default:
+    name: ketchup-network

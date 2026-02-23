@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-02-21T23:52:01.157409",
+  "calendar": {
+    "missing_values": {
+      "passed": true,
+      "issue_count": 0,
+      "issues": [],
+      "quality_level": "high"
+    },
+    "duplicates": {
+      "passed": true,
+      "issue_count": 0,
+      "issues": [],
+      "quality_level": "high"
+    },
+    "outliers": {
+      "passed": true,
+      "issue_count": 0,
+      "issues": [],
+      "quality_level": "high"
+    }
+  }
+}
