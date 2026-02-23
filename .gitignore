@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Docker
+.docker/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+firestore_emulator_data/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+.tmp/
+tmp/
+temp/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# GCP
+.gcp/
+google*.json
+service_account_key.json
+
+# Airflow
+airflow/logs/
+airflow/dags/__pycache__/
+airflow_home/
+
+# Data
+data/cache/
+*.pkl
+*.pickle
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!terraform.tfvars.example
+.terraform.lock.hcl
