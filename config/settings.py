@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     planner_fallback_enabled: bool = False
     backend_internal_api_key: str = ""
     google_maps_api_key: str = ""
+    tavily_api_key: str = ""
     cors_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

@@ -7,6 +7,7 @@ FastAPI backend for group planning, voting, invites, availability, and post-even
 - `api/routes/*`: thin HTTP controllers
 - `services/*`: business logic and data orchestration
 - `agents/planning.py`: canonical LLM planner (OpenAI-compatible tool-calling)
+- `agents/app/main.py`: deprecated compatibility stub (returns 410 on legacy agent endpoints)
 - `database/*`: asyncpg connection and schema migration SQL
 - `config/settings.py`: environment-based configuration
 
@@ -54,6 +55,7 @@ curl http://localhost:8000/health
 - `VLLM_API_KEY`
 - `PLANNER_FALLBACK_ENABLED`
 - `GOOGLE_MAPS_API_KEY`
+- `TAVILY_API_KEY` (optional; enables web-search fallback)
 - `BACKEND_INTERNAL_API_KEY`
 - `FRONTEND_URL`
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`
@@ -104,13 +106,24 @@ Feedback:
 
 - Planner calls an OpenAI-compatible model via `VLLM_BASE_URL`.
 - With `GOOGLE_MAPS_API_KEY`, planner uses tool grounding for places and directions.
+- With `TAVILY_API_KEY`, planner enables `web_search` as an optional third tool and
+  uses web-grounded fallback when maps search returns no venues.
+- `web_search` is fallback-oriented; it may not be invoked when maps already returns viable venues.
 - If structured planner output fails, backend can synthesize deterministic maps-grounded plans (`maps_fallback`) from gathered tool results.
+- If maps grounding is empty but web fallback yields candidates, backend can synthesize deterministic `web_fallback` plans.
 - If planner fails and `PLANNER_FALLBACK_ENABLED=true`, generic fallback plans can be returned (`fallback`).
 
 ## Validation Commands
 
 ```bash
 python3 -m compileall agents api services
+```
+
+Tavily smoke test (inside backend container):
+
+```bash
+docker compose -f ketchup-local/docker-compose.yml exec -T backend env PYTHONPATH=/app \
+  python -c "import asyncio,json; import agents.planning as planning; out=asyncio.run(planning._web_search(query='group activities for friends', location='Boston, MA', max_results=3)); print('ERROR:', out.get('error')); print('RESULT_COUNT:', len(out.get('results', []))); print(json.dumps(out.get('results', [])[:2], indent=2))"
 ```
 
 If you use the local Docker stack, prefer running via `ketchup-local/docker-compose.yml`.

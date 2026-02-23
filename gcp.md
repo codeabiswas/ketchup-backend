@@ -24,7 +24,7 @@ gcloud services enable run.googleapis.com \
 ```bash
 printf "%s" "$HF_TOKEN" | gcloud secrets create HF_TOKEN --data-file=-
 printf "%s" "$MAPS_API_KEY" | gcloud secrets create MAPS_API_KEY --data-file=-
-printf "%s" "$SERPER_API_KEY" | gcloud secrets create SERPER_API_KEY --data-file=-
+printf "%s" "$TAVILY_API_KEY" | gcloud secrets create TAVILY_API_KEY --data-file=-
 ```
 
 ## 3) Artifact Registry repo
@@ -74,7 +74,7 @@ gcloud beta run deploy "$SERVICE_NAME" \
   --no-cpu-throttling \
   --no-gpu-zonal-redundancy \
   --set-secrets=MAPS_API_KEY=MAPS_API_KEY:latest \
-  --set-secrets=SERPER_API_KEY=SERPER_API_KEY:latest \
+  --set-secrets=TAVILY_API_KEY=TAVILY_API_KEY:latest \
   --allow-unauthenticated \
   --startup-probe "httpGet.path=/readyz,httpGet.port=8080,initialDelaySeconds=240,failureThreshold=10,timeoutSeconds=30,periodSeconds=60"
 ```
@@ -113,4 +113,3 @@ curl -X POST "$SERVICE_URL/v1/chat/completions" \
     "messages":[{"role":"user","content":"hello"}]
   }'
 ```
-
