@@ -12,7 +12,7 @@ FastAPI backend plus data pipeline for planning, voting, and analytics feature m
 
 Use this repository's Compose stack to avoid maintaining multiple local Python environments.
 
-1) Configure environment:
+1) Configure environment (Note: Do not worry about having keys for running Data Pipeline):
 
 ```bash
 cd ketchup-backend
@@ -34,11 +34,23 @@ docker compose --profile pipeline up --build -d db pipeline
 4) Run pipeline actions through the pipeline container:
 
 ```bash
-docker compose --profile pipeline exec pipeline uv run --no-project dvc repro
+docker compose --profile pipeline exec pipeline uv run --no-project dvc repro -f
 docker compose --profile pipeline exec pipeline uv run --no-project pytest tests/test_pipeline_components.py -v
+docker compose --profile pipeline exec pipeline uv run --no-project dvc dag
 docker compose --profile pipeline exec pipeline uv run --no-project airflow db migrate
-docker compose --profile pipeline exec pipeline uv run --no-project airflow dags trigger daily_analytics_materialization
+docker compose --profile pipeline exec pipeline uv run --no-project airflow dags trigger daily_analytics_materialization # If this fails, please run the above 2 commands again (i.e.: dvc dav and db migrate)
 docker compose --profile pipeline exec pipeline uv run --no-project airflow dags trigger ketchup_comprehensive_pipeline
+docker compose --profile pipeline exec pipeline uv run --no-project airflow users create \
+    --username admin \
+    --firstname Admin \
+    --lastname User \
+    --role Admin \
+    --email admin@local \
+    --password admin
+docker compose --profile pipeline exec pipeline uv run --no-project airflow scheduler
+
+# Run the following command in another terminal
+docker compose --profile pipeline run --rm -p 8081:8081 pipeline uv run --no-project airflow webserver --port 8081
 ```
 
 Notes:
