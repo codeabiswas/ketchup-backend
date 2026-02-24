@@ -9,6 +9,15 @@ FastAPI backend for groups, planning rounds, voting, invites, availability, and 
 - `agents/planning.py`: canonical planner orchestration.
 - `database/*`: asyncpg connection and schema SQL.
 - `config/settings.py`: environment-backed settings.
+- `pipelines/*`: optional ETL + data quality modules.
+
+## Optional Data Pipeline
+
+Pipeline code (Airflow DAGs, preprocessing, validation, bias checks) lives under
+`pipelines/`. It is intentionally optional and not required to run core API routes.
+
+See `pipelines/README.md` for setup and dependencies.
+Optional script-based pipeline stages are defined in `dvc.yaml`.
 
 ## Requirements
 
@@ -25,6 +34,37 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Optional pipeline stack dependencies:
+
+```bash
+pip install -r requirements-pipeline.txt
+```
+
+## Generated Artifacts
+
+Pipeline and Airflow commands generate local artifacts. Use this policy:
+
+| Artifact | Generate | Commit to git |
+| --- | --- | --- |
+| `airflow.cfg` / `airflow-webserver.pid` | `AIRFLOW_HOME=$(pwd)/airflow_home airflow db init` and `airflow webserver` | No |
+| `data/*` pipeline outputs | `dvc repro` | No |
+| `dvc.lock` | `dvc repro` | Yes (if DVC pipeline/stages change) |
+| `uv.lock` | `uv lock` | No (not used by current backend runtime) |
+
+Example commands:
+
+```bash
+# Airflow local config/runtime files
+export AIRFLOW_HOME="$(pwd)/airflow_home"
+airflow db init
+
+# DVC outputs + lockfile
+dvc repro
+
+# Optional only: generate uv lockfile (not part of current dependency contract)
+uv lock
 ```
 
 Health check:
@@ -111,5 +151,5 @@ Feedback:
 ## Validation
 
 ```bash
-python3 -m compileall agents api services config models
+python3 -m compileall agents api services config models database utils pipelines scripts
 ```

@@ -44,6 +44,16 @@ class Settings(BaseSettings):
 
     frontend_url: str = "http://localhost:3001"
 
+    # Optional data-pipeline and GCP settings.
+    redis_url: str = "redis://localhost:6379"
+    cache_ttl_seconds: int = 3600
+    api_timeout_seconds: int = 10
+    api_max_retries: int = 3
+    api_retry_backoff_factor: float = 0.5
+    gcp_project_id: str = "test-project"
+    gcp_credentials_path: Optional[str] = None
+    firestore_database: str = "(default)"
+
 
 @lru_cache
 def get_settings() -> Settings:
