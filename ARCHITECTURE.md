@@ -48,7 +48,8 @@ The Ketchup backend is a Python-based social coordination platform that recommen
 
 ### External Services Integration
 - **Google Calendar API** - User availability
-- **Google Maps API** - Venue locations and routes
+- **Google Places (Tool Call)** - Venue locations and metadata via LLM tool calling
+- **Google Maps Routes API** - Travel time calculations
 
 ### Data Storage
 - **Firestore** - Real-time operational database
@@ -70,10 +71,11 @@ The Ketchup backend is a Python-based social coordination platform that recommen
 ### 1. Data Ingestion Pipeline
 
 ```
-External APIs → API Clients → Raw Data
+External APIs → API Clients / Tools → Raw Data
     ↓
   Calendar API         GoogleCalendarClient       JSON Response
-  Google Maps API  →   GoogleMapsClient      →    JSON Response
+  Google Places API →  LLM Tool Call         →    JSON Response
+  Google Routes API →  GoogleMapsClient      →    JSON Response
 ```
 
 **Flow Details:**
@@ -147,9 +149,7 @@ class CachedAPIClient:
 - `create_event()` - Create event on calendar
 
 **Google Maps Client**
-- `search_places()` - Search for venues by category
 - `get_route()` - Calculate distance/duration between locations
-
 
 ### Data Normalizer (`utils/data_normalizer.py`)
 

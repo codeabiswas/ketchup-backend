@@ -38,11 +38,13 @@ The pipeline orchestrates data ingestion from external APIs, performs ETL prepro
    - Batch operations support
    - Singleton pattern for connection pooling
 
-6. **Airflow DAGs** (`pipelines/airflow/dags/daily_etl_dag.py`)
+6. **Airflow DAGs** (`pipelines/airflow/dags/daily_etl_dag.py`, `pipelines/airflow/dags/comprehensive_etl_dag.py`)
    - Daily ETL orchestration
    - Parallel extraction tasks
    - Data normalization and validation
    - BigQuery sync and metrics reporting
+   - Bottleneck-aware profiling (`PerformanceProfiler.get_bottlenecks`)
+   - Runtime-gated extended bias analysis (`run_extended_bias_analysis` variable)
 
 7. **FastAPI Server** (`api/main.py`)
    - Health check endpoints
@@ -120,6 +122,33 @@ python -c "from pipelines.airflow.dags.daily_etl_dag import extract_calendar_dat
 
 # Test data normalization
 python -c "from pipelines.airflow.dags.daily_etl_dag import normalize_and_validate; normalize_and_validate()"
+```
+
+### 6. Airflow Optimization Workflow
+
+```bash
+# Start Airflow services
+docker compose up -d airflow-postgres airflow-init airflow-scheduler airflow-webserver
+
+# Trigger optimized comprehensive DAG
+docker compose exec airflow-webserver airflow dags unpause ketchup_comprehensive_pipeline
+docker compose exec airflow-webserver airflow dags trigger ketchup_comprehensive_pipeline
+
+# Optional: enable heavy extended bias branch for deep fairness analysis
+docker compose exec airflow-webserver airflow variables set run_extended_bias_analysis true
+```
+
+Use Airflow UI at http://localhost:8081 and inspect:
+- Gantt view (critical path and queue delay)
+- Task Duration view (cross-run hotspots)
+
+The generated pipeline report at `data/reports/pipeline_report.json` includes:
+- `performance.bottlenecks`
+- top-level `bottlenecks`
+
+```bash
+# Rank slowest tasks by average runtime in Airflow metadata DB
+docker compose exec airflow-postgres psql -U airflow -d airflow -c "select task_id, round(avg(extract(epoch from (end_date-start_date)))::numeric,2) as avg_s, count(*) from task_instance where dag_id='ketchup_comprehensive_pipeline' and state='success' and end_date is not null group by task_id order by avg_s desc;"
 ```
 
 ---
@@ -230,6 +259,69 @@ pytest tests/test_data_pipeline.py -v --cov
 
 ## Development
 
+## Submission Guideline Mapping
+
+### 1) Folder Structure
+
+The repository follows the required structure pattern (mapped to current names):
+
+```
+/Project Repo
+|- pipelines/
+|  |- airflow/
+|  |  |- dags/
+|- data/
+|- scripts/
+|- tests/
+|- logs/
+|- dvc.yaml
+\- README.md
+```
+
+### 2) README Coverage
+
+- Environment setup: Quick Start section.
+- Pipeline run steps: Simulate ETL Pipeline + Airflow Optimization Workflow.
+- Code structure explanation: Project Structure section.
+- Reproducibility and DVC: section below.
+
+### 3) Reproducibility and DVC
+
+```bash
+# From repository root
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+# source .venv/bin/activate
+
+pip install -r requirements.txt
+
+# Optional if remote is configured
+dvc pull
+
+# Reproduce all stages from dvc.yaml
+dvc repro
+```
+
+Expected outputs include:
+- `data/raw/*.csv`
+- `data/processed/*.csv`
+- `data/reports/*.json|*.md|*.txt`
+- `data/metrics/*.json`
+- `data/statistics/*.json`
+
+### 4) Code Style and Modularity
+
+- Modular packages: `pipelines/`, `utils/`, `database/`, `services/`, `api/`.
+- PEP 8 toolchain: `black`, `flake8`, `mypy`.
+
+### 5) Error Handling and Logging
+
+- Core scripts in `scripts/` include stage-level try/except handling with non-zero exit on failure.
+- Structured logs are emitted for success/failure paths to simplify troubleshooting.
+- Monitoring helpers are centralized in `pipelines/monitoring.py`.
+
 ### Project Structure
 
 ```
@@ -328,13 +420,3 @@ To contribute to the data pipeline:
 5. Submit PR with test results
 
 ---
-
-## 📧 Support
-
-For issues or questions, open a GitHub issue or contact the data team.
-
----
-
-**Version:** 0.1.0 (MVP - Phase 1)
-**Status:** Beta
-**Last Updated:** February 21, 2026

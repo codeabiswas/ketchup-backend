@@ -3,6 +3,7 @@
 """Canonical planning agent orchestration with vLLM tool-calling."""
 
 import ast
+import asyncio
 import json
 import logging
 import re
@@ -13,7 +14,12 @@ from uuid import UUID
 
 import httpx
 from openai import APIConnectionError, AsyncOpenAI
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 from config import get_settings
 from database import db
@@ -33,7 +39,10 @@ PLANNER_TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "origin": {"type": "string", "description": "Starting address or place."},
+                    "origin": {
+                        "type": "string",
+                        "description": "Starting address or place.",
+                    },
                     "destination": {
                         "type": "string",
                         "description": "Destination address or place.",
@@ -128,9 +137,7 @@ PLACES_FIELD_MASK = (
     "places.displayName,places.formattedAddress,places.rating,places.priceLevel"
 )
 ROUTES_COMPUTE_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
-ROUTES_FIELD_MASK = (
-    "routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration"
-)
+ROUTES_FIELD_MASK = "routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration"
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 
@@ -156,7 +163,7 @@ async def init_planner_client() -> None:
         limits=httpx.Limits(
             max_connections=settings.vllm_max_connections,
             max_keepalive_connections=settings.vllm_max_keepalive_connections,
-        )
+        ),
     )
 
     _planner_client = AsyncOpenAI(
@@ -191,7 +198,7 @@ def _get_planner_client() -> AsyncOpenAI:
             httpx.ConnectTimeout,
             httpx.ConnectError,
             httpx.PoolTimeout,
-        )
+        ),
     ),
 )
 async def _call_vllm_chat(messages: list[dict[str, Any]], **kwargs):
@@ -217,7 +224,12 @@ async def _call_vllm_chat(messages: list[dict[str, Any]], **kwargs):
 def _strip_code_fence(text: str) -> str:
     candidate = text.strip()
     # Qwen/llama.cpp can emit reasoning traces; remove them before JSON parsing.
-    candidate = re.sub(r"<think>.*?</think>", "", candidate, flags=re.DOTALL | re.IGNORECASE).strip()
+    candidate = re.sub(
+        r"<think>.*?</think>",
+        "",
+        candidate,
+        flags=re.DOTALL | re.IGNORECASE,
+    ).strip()
     if candidate.startswith("```"):
         candidate = re.sub(r"^```[a-zA-Z0-9_\-]*", "", candidate).strip()
         if candidate.endswith("```"):
@@ -369,7 +381,7 @@ def _extract_plans(raw_text: str) -> list[dict[str, Any]]:
                     "logistics": {},
                 },
                 len(plans),
-            )
+            ),
         )
 
     return plans
@@ -397,7 +409,9 @@ def _base_location_from_context(context: dict[str, Any]) -> str:
 
 
 def _build_fallback_plans(
-    context: dict[str, Any], reason: str, refinement_notes: str | None = None
+    context: dict[str, Any],
+    reason: str,
+    refinement_notes: str | None = None,
 ) -> list[dict[str, Any]]:
     base_location = _base_location_from_context(context)
 
@@ -410,11 +424,31 @@ def _build_fallback_plans(
     refinement_short = (refinement_notes or "")[:240]
 
     templates = [
-        ("Cozy Cafe Catch-up", "Relaxed hangout over coffee and conversation.", "$10-20 per person"),
-        ("Food Hall Sampler", "Try multiple cuisines together in one spot.", "$20-35 per person"),
-        ("Park Picnic Sunset", "Low-cost outdoor plan with time to talk.", "$5-15 per person"),
-        ("Bowling + Snacks", "Casual activity with light competition.", "$25-40 per person"),
-        ("Live Event Night", "Explore a slightly adventurous local event.", "$30-60 per person"),
+        (
+            "Cozy Cafe Catch-up",
+            "Relaxed hangout over coffee and conversation.",
+            "$10-20 per person",
+        ),
+        (
+            "Food Hall Sampler",
+            "Try multiple cuisines together in one spot.",
+            "$20-35 per person",
+        ),
+        (
+            "Park Picnic Sunset",
+            "Low-cost outdoor plan with time to talk.",
+            "$5-15 per person",
+        ),
+        (
+            "Bowling + Snacks",
+            "Casual activity with light competition.",
+            "$25-40 per person",
+        ),
+        (
+            "Live Event Night",
+            "Explore a slightly adventurous local event.",
+            "$30-60 per person",
+        ),
     ]
 
     plans: list[dict[str, Any]] = []
@@ -434,7 +468,7 @@ def _build_fallback_plans(
                     "refinement_notes": refinement_short,
                     "members": member_names,
                 },
-            }
+            },
         )
     return plans
 
@@ -509,7 +543,9 @@ def _format_distance(meters: Any) -> str | None:
     return f"{miles:.1f} mi"
 
 
-def _extract_places_from_tool_messages(tool_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _extract_places_from_tool_messages(
+    tool_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     places: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
 
@@ -549,7 +585,7 @@ def _extract_places_from_tool_messages(tool_messages: list[dict[str, Any]]) -> l
                     "address": address,
                     "rating": place.get("rating"),
                     "price_level": place.get("price_level"),
-                }
+                },
             )
     return places
 
@@ -595,7 +631,7 @@ def _build_maps_grounded_fallback_plans(
                     "members": member_names,
                     "venue": place,
                 },
-            }
+            },
         )
 
     if len(plans) < 5:
@@ -656,7 +692,7 @@ def _extract_web_results_from_tool_messages(
                     "link": link,
                     "snippet": snippet,
                     "source": source,
-                }
+                },
             )
     return results
 
@@ -703,7 +739,7 @@ def _build_web_grounded_fallback_plans(
                         "source": source,
                     },
                 },
-            }
+            },
         )
 
     if len(plans) < 5:
@@ -921,7 +957,11 @@ Return strict JSON with this schema:
 """.strip()
 
 
-async def _search_places(query: str, location: str, max_results: int = 3) -> dict[str, Any]:
+async def _search_places(
+    query: str,
+    location: str,
+    max_results: int = 3,
+) -> dict[str, Any]:
     settings = get_settings()
     if not settings.google_maps_api_key:
         return {"error": "GOOGLE_MAPS_API_KEY not set"}
@@ -982,9 +1022,7 @@ async def _search_places(query: str, location: str, max_results: int = 3) -> dic
         name = (
             display_name.get("text")
             if isinstance(display_name, dict)
-            else item.get("name")
-            if isinstance(item, dict)
-            else None
+            else item.get("name") if isinstance(item, dict) else None
         )
         address = item.get("formattedAddress") if isinstance(item, dict) else None
         places.append(
@@ -992,8 +1030,10 @@ async def _search_places(query: str, location: str, max_results: int = 3) -> dic
                 "name": name,
                 "address": address,
                 "rating": item.get("rating") if isinstance(item, dict) else None,
-                "price_level": item.get("priceLevel") if isinstance(item, dict) else None,
-            }
+                "price_level": (
+                    item.get("priceLevel") if isinstance(item, dict) else None
+                ),
+            },
         )
     return {"places": places}
 
@@ -1071,9 +1111,11 @@ async def _web_search(
             {
                 "title": str(item.get("title") or "").strip(),
                 "link": link,
-                "snippet": str(item.get("content") or item.get("snippet") or "").strip(),
+                "snippet": str(
+                    item.get("content") or item.get("snippet") or "",
+                ).strip(),
                 "source": source,
-            }
+            },
         )
 
     return {"results": results}
@@ -1147,7 +1189,9 @@ async def _build_web_fallback_if_available(
 
 
 async def _get_directions(
-    origin: str, destination: str, mode: str = "driving"
+    origin: str,
+    destination: str,
+    mode: str = "driving",
 ) -> dict[str, Any]:
     settings = get_settings()
     if not settings.google_maps_api_key:
@@ -1227,7 +1271,7 @@ async def _get_directions(
     if distance_meters is None and isinstance(route, dict):
         distance_meters = route.get("distanceMeters")
     duration_seconds = _duration_to_seconds(
-        leg.get("duration") if isinstance(leg, dict) else None
+        leg.get("duration") if isinstance(leg, dict) else None,
     )
     if duration_seconds is None and isinstance(route, dict):
         duration_seconds = _duration_to_seconds(route.get("duration"))
@@ -1259,6 +1303,44 @@ async def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def invoke_tool(tool_name: str, **kwargs) -> Any:
+    """Synchronous compatibility wrapper for planner tool calls."""
+    tool_aliases = {
+        "google_places_search": "search_places",
+        "search_places": "search_places",
+        "get_directions": "get_directions",
+        "web_search": "web_search",
+    }
+    normalized_name = tool_aliases.get(tool_name, tool_name)
+
+    arguments = dict(kwargs)
+    if normalized_name == "search_places":
+        location = arguments.get("location")
+        if isinstance(location, (tuple, list)) and len(location) >= 2:
+            arguments["location"] = f"{location[0]}, {location[1]}"
+        arguments.pop("radius", None)
+        arguments.setdefault("max_results", 3)
+
+    async def _invoke() -> dict[str, Any]:
+        return await _execute_tool(normalized_name, arguments)
+
+    try:
+        result = asyncio.run(_invoke())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(_invoke())
+        finally:
+            loop.close()
+
+    if normalized_name == "search_places":
+        if isinstance(result, dict):
+            return result.get("places", [])
+        return []
+
+    return result
+
+
 async def _run_tool_loop(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
@@ -1284,8 +1366,10 @@ async def _run_tool_loop(
             {
                 "role": "assistant",
                 "content": message.content or "",
-                "tool_calls": [tc.model_dump(exclude_none=True) for tc in message.tool_calls],
-            }
+                "tool_calls": [
+                    tc.model_dump(exclude_none=True) for tc in message.tool_calls
+                ],
+            },
         )
 
         round_had_success = False
@@ -1315,7 +1399,7 @@ async def _run_tool_loop(
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": json.dumps(tool_result),
-                }
+                },
             )
 
         if round_had_success:
@@ -1348,7 +1432,7 @@ async def _run_tool_loop(
         {
             "role": "user",
             "content": "Finalize now and return valid JSON with exactly 5 plans.",
-        }
+        },
     )
     final = await _call_vllm_chat(
         messages=work_messages,
@@ -1401,7 +1485,9 @@ async def generate_group_plans(
     tools = (
         PLANNER_TOOLS
         if use_web_search
-        else [tool for tool in PLANNER_TOOLS if tool["function"]["name"] != "web_search"]
+        else [
+            tool for tool in PLANNER_TOOLS if tool["function"]["name"] != "web_search"
+        ]
     )
     system_prompt = (
         SYSTEM_PROMPT_TOOL_GROUNDED if use_tool_grounding else SYSTEM_PROMPT_BEST_EFFORT
@@ -1443,7 +1529,7 @@ async def generate_group_plans(
             )
         else:
             logger.warning(
-                "GOOGLE_MAPS_API_KEY missing; generating best-effort plans without tool grounding."
+                "GOOGLE_MAPS_API_KEY missing; generating best-effort plans without tool grounding.",
             )
             response = await _call_vllm_chat(
                 messages=[
@@ -1485,15 +1571,21 @@ async def generate_group_plans(
                         group_id,
                     )
                     return web_synthesized
-                if tool_summary["place_calls"] > 0 and tool_summary["place_results"] == 0:
+                if (
+                    tool_summary["place_calls"] > 0
+                    and tool_summary["place_results"] == 0
+                ):
                     details_parts: list[str] = []
                     if tool_summary["errors"]:
                         details_parts.append("; ".join(tool_summary["errors"][:2]))
                     if web_errors:
                         details_parts.append("; ".join(web_errors[:2]))
-                    details = " | ".join(details_parts) or "search_places returned zero results"
+                    details = (
+                        " | ".join(details_parts)
+                        or "search_places returned zero results"
+                    )
                     raise PlannerError(
-                        f"LLM returned no plans and map search produced no usable venues ({details})"
+                        f"LLM returned no plans and map search produced no usable venues ({details})",
                     ) from parse_exc
 
             snippet = _strip_code_fence(output)[:800].replace("\n", "\\n")

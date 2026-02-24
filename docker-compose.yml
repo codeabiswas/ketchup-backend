@@ -90,6 +90,10 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__WEBSERVER__SECRET_KEY=ketchup_secret_key_change_in_production
       - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/pipelines/airflow/dags
+      - PYTHONPATH=/opt/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS=pydantic==2.4.2 pydantic-core==2.10.1 pydantic-settings==2.1.0 typing-extensions==4.12.2 google-cloud-firestore==2.14.0 asyncpg==0.30.0 openai>=1.99.1
+      - FIRESTORE_EMULATOR_HOST=firestore-emulator:8080
+      - REDIS_URL=redis://redis:6379
     volumes:
       - .:/opt/airflow
       - airflow-logs:/opt/airflow/logs
@@ -115,6 +119,10 @@ services:
       - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/pipelines/airflow/dags
+      - PYTHONPATH=/opt/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS=pydantic==2.4.2 pydantic-core==2.10.1 pydantic-settings==2.1.0 typing-extensions==4.12.2 google-cloud-firestore==2.14.0 asyncpg==0.30.0 openai>=1.99.1
+      - FIRESTORE_EMULATOR_HOST=firestore-emulator:8080
+      - REDIS_URL=redis://redis:6379
     volumes:
       - .:/opt/airflow
       - airflow-logs:/opt/airflow/logs
@@ -139,6 +147,10 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
       - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - PYTHONPATH=/opt/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS=pydantic==2.4.2 pydantic-core==2.10.1 pydantic-settings==2.1.0 typing-extensions==4.12.2 google-cloud-firestore==2.14.0 asyncpg==0.30.0 openai>=1.99.1
+      - FIRESTORE_EMULATOR_HOST=firestore-emulator:8080
+      - REDIS_URL=redis://redis:6379
     depends_on:
       airflow-postgres:
         condition: service_healthy

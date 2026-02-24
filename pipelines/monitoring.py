@@ -3,6 +3,7 @@
 import json
 import logging
 import smtplib
+import time
 import traceback
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -358,12 +359,14 @@ class PerformanceProfiler:
     def __init__(self):
         """Initialize performance profiler."""
         self.profiles = {}
+        self.history = {}
         self.logger = logging.getLogger(__name__)
 
     def start_profiling(self, task_name: str) -> None:
         """Start profiling a task."""
         self.profiles[task_name] = {
             "start_time": datetime.now(),
+            "start_perf_counter": time.perf_counter(),
             "end_time": None,
             "duration_seconds": None,
             "status": "running",
@@ -385,11 +388,29 @@ class PerformanceProfiler:
             return 0
 
         end_time = datetime.now()
-        duration = (end_time - self.profiles[task_name]["start_time"]).total_seconds()
+        start_perf_counter = self.profiles[task_name].get("start_perf_counter")
+
+        if start_perf_counter is not None:
+            duration = time.perf_counter() - start_perf_counter
+        else:
+            duration = (
+                end_time - self.profiles[task_name]["start_time"]
+            ).total_seconds()
 
         self.profiles[task_name]["end_time"] = end_time
         self.profiles[task_name]["duration_seconds"] = duration
         self.profiles[task_name]["status"] = status
+
+        if task_name not in self.history:
+            self.history[task_name] = []
+
+        self.history[task_name].append(
+            {
+                "end_time": end_time,
+                "duration_seconds": duration,
+                "status": status,
+            },
+        )
 
         self.logger.info(
             f"Task {task_name} completed in {duration:.2f} seconds "
@@ -397,6 +418,55 @@ class PerformanceProfiler:
         )
 
         return duration
+
+    def get_bottlenecks(
+        self,
+        top_n: int = 3,
+        min_duration_seconds: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get slowest tasks based on average and latest observed durations.
+
+        Args:
+            top_n: Maximum number of bottleneck tasks to return
+            min_duration_seconds: Minimum average duration to include
+
+        Returns:
+            List of bottleneck task summaries sorted by avg duration desc
+        """
+        bottlenecks = []
+
+        for task_name, runs in self.history.items():
+            durations = [
+                run["duration_seconds"] for run in runs if run["duration_seconds"]
+            ]
+
+            if not durations:
+                continue
+
+            avg_duration = sum(durations) / len(durations)
+            if avg_duration < min_duration_seconds:
+                continue
+
+            bottlenecks.append(
+                {
+                    "task_name": task_name,
+                    "avg_duration_seconds": avg_duration,
+                    "max_duration_seconds": max(durations),
+                    "latest_duration_seconds": durations[-1],
+                    "run_count": len(durations),
+                },
+            )
+
+        bottlenecks.sort(
+            key=lambda item: (
+                item["avg_duration_seconds"],
+                item["max_duration_seconds"],
+            ),
+            reverse=True,
+        )
+
+        return bottlenecks[:top_n]
 
     def get_profile_summary(self) -> Dict[str, Any]:
         """
@@ -409,13 +479,23 @@ class PerformanceProfiler:
             "total_tasks": len(self.profiles),
             "total_duration": 0,
             "tasks": {},
+            "bottlenecks": self.get_bottlenecks(top_n=5),
         }
 
         for task_name, profile in self.profiles.items():
             duration = profile["duration_seconds"] or 0
             summary["total_duration"] += duration
+
+            task_runs = self.history.get(task_name, [])
+            run_durations = [run["duration_seconds"] for run in task_runs]
+            avg_duration = (
+                (sum(run_durations) / len(run_durations)) if run_durations else duration
+            )
+
             summary["tasks"][task_name] = {
                 "duration_seconds": duration,
+                "avg_duration_seconds": avg_duration,
+                "run_count": len(task_runs) if task_runs else 1,
                 "status": profile["status"],
             }
 

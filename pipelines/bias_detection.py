@@ -53,66 +53,6 @@ class DataSlicer:
 
         return slices
 
-    @staticmethod
-    def slice_by_multiple_features(
-        df: pd.DataFrame,
-        feature_columns: List[str],
-    ) -> Dict[str, pd.DataFrame]:
-        """
-        Slice data by multiple features.
-
-        Args:
-            df: Input DataFrame
-            feature_columns: List of columns for slicing
-
-        Returns:
-            Dictionary of sliced DataFrames
-        """
-        slices = {}
-
-        for col in feature_columns:
-            col_slices = DataSlicer.slice_by_demographic(df, col)
-            slices.update(col_slices)
-
-        logger.info(f"Created {len(slices)} data slices")
-        return slices
-
-    @staticmethod
-    def create_demographic_strata(
-        df: pd.DataFrame,
-        demographic_features: List[str],
-    ) -> Dict[str, pd.DataFrame]:
-        """
-        Create demographic strata (intersectional slices).
-
-        Args:
-            df: Input DataFrame
-            demographic_features: Features to create strata with
-
-        Returns:
-            Dictionary of stratified DataFrames
-        """
-        strata = {}
-
-        combinations = df[demographic_features].drop_duplicates()
-
-        for idx, row in combinations.iterrows():
-            mask = pd.Series([True] * len(df))
-            stratum_name_parts = []
-
-            for col in demographic_features:
-                mask = mask & (df[col] == row[col])
-                stratum_name_parts.append(f"{col}={row[col]}")
-
-            stratum_name = "_".join(stratum_name_parts)
-            strata[stratum_name] = df[mask]
-
-            logger.info(
-                f"Created stratum {stratum_name} " f"with {len(df[mask])} records",
-            )
-
-        return strata
-
 
 class BiasAnalyzer:
     """Analyzes bias in data and model predictions."""
@@ -207,31 +147,6 @@ class BiasAnalyzer:
         return odds_metrics
 
     @staticmethod
-    def calculate_disparate_impact_ratio(
-        reference_group_rate: float,
-        comparison_group_rate: float,
-    ) -> float:
-        """
-        Calculate disparate impact ratio.
-
-        Ratio < 0.8 indicates potential discrimination.
-
-        Args:
-            reference_group_rate: Selection rate for reference group
-            comparison_group_rate: Selection rate for comparison group
-
-        Returns:
-            Disparate impact ratio
-        """
-        if reference_group_rate == 0:
-            return 0
-
-        di_ratio = comparison_group_rate / reference_group_rate
-        logger.info(f"Disparate impact ratio: {di_ratio:.4f}")
-
-        return di_ratio
-
-    @staticmethod
     def detect_bias_in_slices(
         slices: Dict[str, pd.DataFrame],
         target_column: str,
@@ -316,93 +231,6 @@ class BiasAnalyzer:
 
 class BiasMitigationStrategy:
     """Mitigation strategies for detected bias."""
-
-    @staticmethod
-    def resample_underrepresented(
-        df: pd.DataFrame,
-        demographic_column: str,
-        target_column: str,
-    ) -> pd.DataFrame:
-        """
-        Resample data to balance underrepresented groups.
-
-        Args:
-            df: Input DataFrame
-            demographic_column: Demographic feature column
-            target_column: Target column
-
-        Returns:
-            Resampled DataFrame
-        """
-        resampled_dfs = []
-        max_samples = 0
-
-        for group in df[demographic_column].unique():
-            group_df = df[df[demographic_column] == group]
-            max_samples = max(max_samples, len(group_df))
-
-        for group in df[demographic_column].unique():
-            group_df = df[df[demographic_column] == group]
-
-            if len(group_df) < max_samples:
-                upsampled = group_df.sample(n=max_samples, replace=True)
-                resampled_dfs.append(upsampled)
-            else:
-                resampled_dfs.append(group_df)
-
-        df_balanced = pd.concat(resampled_dfs, ignore_index=True)
-        logger.info(
-            f"Resampled data from {len(df)} to {len(df_balanced)} records "
-            f"to balance {demographic_column}",
-        )
-
-        return df_balanced
-
-    @staticmethod
-    def stratified_sampling(
-        df: pd.DataFrame,
-        demographic_columns: List[str],
-        sample_size: int = None,
-    ) -> pd.DataFrame:
-        """
-        Use stratified sampling to ensure representation.
-
-        Args:
-            df: Input DataFrame
-            demographic_columns: Columns to stratify on
-            sample_size: Total sample size
-
-        Returns:
-            Stratified sample DataFrame
-        """
-        if sample_size is None:
-            sample_size = len(df)
-
-        # Calculate stratum sizes
-        group_counts = df.groupby(demographic_columns).size()
-        total = group_counts.sum()
-        stratum_sizes = (group_counts / total * sample_size).round().astype(int)
-
-        sampled_dfs = []
-        for stratum_name, count in zip(stratum_sizes.index, stratum_sizes.values):
-            mask = pd.Series([True] * len(df))
-            for i, col in enumerate(demographic_columns):
-                mask = mask & (df[col] == stratum_name[i])
-
-            stratum_df = df[mask]
-            if len(stratum_df) > 0:
-                sampled = stratum_df.sample(
-                    n=min(count, len(stratum_df)),
-                    replace=False,
-                )
-                sampled_dfs.append(sampled)
-
-        df_stratified = pd.concat(sampled_dfs, ignore_index=True)
-        logger.info(
-            f"Created stratified sample of {len(df_stratified)} records",
-        )
-
-        return df_stratified
 
     @staticmethod
     def generate_mitigation_report(

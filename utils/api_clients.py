@@ -168,58 +168,12 @@ class GoogleCalendarClient(CachedAPIClient):
 
 
 class GoogleMapsClient(CachedAPIClient):
-    """Google Maps API client for places and routes."""
+    """Google Maps API client for routes."""
 
     def __init__(self):
         super().__init__()
         self.api_key = settings.google_maps_api_key
-        self.places_url = "https://places.googleapis.com/v1/places"
         self.routes_url = "https://routes.googleapis.com/directions/v2:computeRoutes"
-
-    def search_places(
-        self,
-        query: str,
-        location: tuple,
-        radius: int = 5000,
-    ) -> List[Dict[str, Any]]:
-        """
-        Search for places near a location.
-
-        Args:
-            query: Search query (e.g., "bowling")
-            location: (latitude, longitude)
-            radius: Search radius in meters
-
-        Returns:
-            List of nearby places
-        """
-        cache_key = f"maps:places:{query}:{location}:{radius}"
-        cached = self._get_from_cache(cache_key)
-        if cached:
-            return cached
-
-        try:
-            params = {
-                "query": query,
-                "location": f"{location[0]},{location[1]}",
-                "radius": radius,
-                "key": self.api_key,
-            }
-            response = self.session.get(
-                f"{self.places_url}:searchNearby",
-                params=params,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-
-            places = response.json().get("places", [])
-            self._set_to_cache(cache_key, places)
-            logger.info(f"Found {len(places)} places for query: {query}")
-            return places
-
-        except requests.RequestException as e:
-            logger.error(f"Error searching places: {e}")
-            raise
 
     def get_route(
         self,

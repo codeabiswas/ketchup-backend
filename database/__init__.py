@@ -2,6 +2,9 @@
 
 """Data persistence layer."""
 
-from database.connection import db
+try:
+    from database.connection import db
+except Exception:
+    db = None
 
 __all__ = ["db"]

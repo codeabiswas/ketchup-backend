@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+import logging
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def _ensure_dirs(*paths: Path) -> None:
@@ -16,7 +24,7 @@ def _ensure_dirs(*paths: Path) -> None:
 
 
 def _generate_calendar_data(user_count: int = 50) -> pd.DataFrame:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     user_ids = [f"user_{i:03d}" for i in range(1, user_count + 1)]
     rng = np.random.default_rng(42)
 
@@ -47,29 +55,32 @@ def _generate_calendar_data(user_count: int = 50) -> pd.DataFrame:
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1]
-    raw_dir = root / "data" / "raw"
-    metrics_dir = root / "data" / "metrics"
-    _ensure_dirs(raw_dir, metrics_dir)
+    try:
+        root = Path(__file__).resolve().parents[1]
+        raw_dir = root / "data" / "raw"
+        metrics_dir = root / "data" / "metrics"
+        _ensure_dirs(raw_dir, metrics_dir)
 
-    calendar_df = _generate_calendar_data()
+        calendar_df = _generate_calendar_data()
 
-    calendar_path = raw_dir / "calendar_data.csv"
+        calendar_path = raw_dir / "calendar_data.csv"
+        calendar_df.to_csv(calendar_path, index=False)
 
-    calendar_df.to_csv(calendar_path, index=False)
+        metrics = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "calendar_records": int(len(calendar_df)),
+            "calendar_missing_values": int(calendar_df.isnull().sum().sum()),
+        }
 
-    metrics = {
-        "generated_at": datetime.utcnow().isoformat(),
-        "calendar_records": int(len(calendar_df)),
-        "calendar_missing_values": int(calendar_df.isnull().sum().sum()),
-    }
+        metrics_path = metrics_dir / "acquisition_metrics.json"
+        with metrics_path.open("w", encoding="utf-8") as handle:
+            json.dump(metrics, handle, indent=2)
 
-    metrics_path = metrics_dir / "acquisition_metrics.json"
-    with metrics_path.open("w", encoding="utf-8") as handle:
-        json.dump(metrics, handle, indent=2)
-
-    print(f"Saved calendar data to {calendar_path}")
-    print(f"Saved metrics to {metrics_path}")
+        logger.info("Saved calendar data to %s", calendar_path)
+        logger.info("Saved metrics to %s", metrics_path)
+    except Exception:
+        logger.exception("Data acquisition stage failed")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

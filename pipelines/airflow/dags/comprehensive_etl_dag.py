@@ -13,6 +13,7 @@ Pipeline stages:
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -20,40 +21,103 @@ import numpy as np
 import pandas as pd
 from airflow import DAG
 from airflow.exceptions import AirflowException
+from airflow.models import Variable
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
-from airflow.utils.decorators import task
-
-from config.settings import settings
-from database.firestore_client import get_firestore_client
-from pipelines.bias_detection import BiasAnalyzer, BiasMitigationStrategy, DataSlicer
-from pipelines.monitoring import (
-    AnomalyAlert,
-    PerformanceProfiler,
-    PipelineLogger,
-    PipelineMonitor,
-)
-
-# Import pipeline components
-from pipelines.preprocessing import (
-    DataAggregator,
-    DataCleaner,
-    DataTransformer,
-    FeatureEngineer,
-)
-from pipelines.validation import (
-    AnomalyDetector,
-    DataStatisticsGenerator,
-    RangeValidator,
-    SchemaValidator,
-)
-from utils.api_clients import get_calendar_client, get_maps_client
+from airflow.operators.python import PythonOperator, ShortCircuitOperator
 
 # Configure logging
 logger = logging.getLogger(__name__)
-pipeline_logger = PipelineLogger("ketchup_pipeline", "logs/pipeline.log")
-monitor = PipelineMonitor()
-profiler = PerformanceProfiler()
+
+
+class _FallbackPipelineLogger:
+    def log_task_start(self, task_name: str, params: Dict = None) -> None:
+        logger.info("task_started: %s", task_name)
+
+    def log_task_end(
+        self,
+        task_name: str,
+        status: str,
+        duration_seconds: float,
+        result: Dict = None,
+    ) -> None:
+        logger.info(
+            "task_completed: %s status=%s duration=%.2f",
+            task_name,
+            status,
+            duration_seconds,
+        )
+
+    def log_data_quality(
+        self,
+        stage: str,
+        record_count: int,
+        quality_score: float,
+        issues: list[str] = None,
+    ) -> None:
+        logger.info(
+            "data_quality_check: stage=%s records=%s score=%s issues=%s",
+            stage,
+            record_count,
+            quality_score,
+            len(issues or []),
+        )
+
+    def log_error(self, task_name: str, error: Exception, context: Dict = None) -> None:
+        logger.exception("task_failed: %s error=%s", task_name, error)
+
+
+class _FallbackPipelineMonitor:
+    def record_metric(
+        self,
+        metric_name: str,
+        value: float,
+        metadata: Dict = None,
+    ) -> None:
+        logger.info("metric: %s=%s", metric_name, value)
+
+    def get_metrics_summary(self) -> Dict[str, Any]:
+        return {}
+
+
+class _FallbackPerformanceProfiler:
+    def __init__(self):
+        self._durations: Dict[str, float] = {}
+
+    def start_profiling(self, task_name: str) -> None:
+        self._durations[task_name] = 0.0
+
+    def end_profiling(self, task_name: str, status: str = "completed") -> float:
+        return self._durations.get(task_name, 0.0)
+
+    def get_profile_summary(self) -> Dict[str, Any]:
+        return {"total_tasks": len(self._durations), "total_duration": 0, "tasks": {}}
+
+    def get_bottlenecks(
+        self,
+        top_n: int = 5,
+        min_duration_seconds: float = 1.0,
+    ) -> list[Dict[str, Any]]:
+        return []
+
+
+try:
+    from pipelines.monitoring import (
+        PerformanceProfiler,
+        PipelineLogger,
+        PipelineMonitor,
+    )
+
+    pipeline_logger = PipelineLogger("ketchup_pipeline", "logs/pipeline.log")
+    monitor = PipelineMonitor()
+    profiler = PerformanceProfiler()
+except Exception as import_error:
+    logger.warning(
+        "Using fallback monitoring classes because monitoring imports failed during DAG parse: %s",
+        import_error,
+    )
+    pipeline_logger = _FallbackPipelineLogger()
+    monitor = _FallbackPipelineMonitor()
+    profiler = _FallbackPerformanceProfiler()
 
 # Airflow DAG Configuration
 default_args = {
@@ -81,6 +145,9 @@ dag = DAG(
 
 def acquire_calendar_data(**context) -> Dict[str, Any]:
     """Extract calendar data from all active users."""
+    from database.firestore_client import get_firestore_client
+    from utils.api_clients import get_calendar_client
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
@@ -126,13 +193,14 @@ def acquire_calendar_data(**context) -> Dict[str, Any]:
 
 
 def acquire_venue_data(**context) -> Dict[str, Any]:
-    """Extract venue data from Google Maps."""
+    """Extract venue data from Google Places via tool calling."""
+    from agents.planning import invoke_tool
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
 
     try:
-        maps_client = get_maps_client()
         # Locations (approximate centers)
         locations = {
             "Boston, MA": (42.3601, -71.0589),
@@ -146,8 +214,10 @@ def acquire_venue_data(**context) -> Dict[str, Any]:
         for location_name, coords in locations.items():
             for category in venue_categories:
                 try:
-                    # Search venues via Google Maps
-                    places = maps_client.search_places(
+                    # Search venues via Google Places tool call
+                    # This invokes LLM with google_places tool
+                    places = invoke_tool(
+                        tool_name="google_places_search",
                         query=category,
                         location=coords,
                         radius=2000,
@@ -180,6 +250,8 @@ def acquire_venue_data(**context) -> Dict[str, Any]:
 
 def preprocess_data(**context) -> Dict[str, Any]:
     """Preprocess and transform acquired data."""
+    from pipelines.preprocessing import DataAggregator, DataCleaner, FeatureEngineer
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
@@ -188,13 +260,19 @@ def preprocess_data(**context) -> Dict[str, Any]:
         task_instance = context["task_instance"]
 
         # Get data from previous tasks
-        calendar_data = task_instance.xcom_pull(
-            task_ids="acquire_calendar_data",
-            key="calendar_data",
+        calendar_data = (
+            task_instance.xcom_pull(
+                task_ids="acquire_calendar_data",
+                key="calendar_data",
+            )
+            or []
         )
-        venue_data = task_instance.xcom_pull(
-            task_ids="acquire_venue_data",
-            key="venue_data",
+        venue_data = (
+            task_instance.xcom_pull(
+                task_ids="acquire_venue_data",
+                key="venue_data",
+            )
+            or []
         )
 
         logger.info(f"Processing {len(calendar_data)} calendar records")
@@ -210,22 +288,29 @@ def preprocess_data(**context) -> Dict[str, Any]:
         df_calendar = DataCleaner.remove_duplicates(df_calendar)
         df_calendar = DataCleaner.handle_missing_values(df_calendar, strategy="drop")
 
-        df_venues = DataCleaner.remove_duplicates(df_venues, subset=["venue_id"])
-        df_venues = DataCleaner.remove_outliers(
-            df_venues,
-            column="rating",
-            method="iqr",
-        )
+        if "venue_id" in df_venues.columns:
+            df_venues = DataCleaner.remove_duplicates(df_venues, subset=["venue_id"])
+        else:
+            df_venues = DataCleaner.remove_duplicates(df_venues)
 
-        # Transform data
-        df_venues = DataTransformer.normalize_numeric(
-            df_venues,
-            columns=["rating", "price_level"],
-            method="minmax",
-        )
+        if "rating" in df_venues.columns and not df_venues.empty:
+            df_venues = DataCleaner.remove_outliers(
+                df_venues,
+                column="rating",
+                method="iqr",
+            )
+        else:
+            logger.warning(
+                "Skipping venue outlier removal: missing 'rating' column or no venue rows",
+            )
 
         # Feature engineering
-        df_venues = FeatureEngineer.create_venue_features(df_venues)
+        if "rating" in df_venues.columns and not df_venues.empty:
+            df_venues = FeatureEngineer.create_venue_features(df_venues)
+        else:
+            logger.warning(
+                "Skipping venue feature engineering: missing 'rating' column or no venue rows",
+            )
 
         pipeline_logger.log_task_end(
             task_id,
@@ -261,6 +346,8 @@ def preprocess_data(**context) -> Dict[str, Any]:
 
 def validate_data_quality(**context) -> Dict[str, Any]:
     """Validate data schemas and quality."""
+    from pipelines.validation import RangeValidator, SchemaValidator
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
@@ -371,6 +458,8 @@ def validate_data_quality(**context) -> Dict[str, Any]:
 
 def detect_anomalies(**context) -> Dict[str, Any]:
     """Detect anomalies in data."""
+    from pipelines.validation import AnomalyDetector
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
@@ -445,6 +534,12 @@ def detect_anomalies(**context) -> Dict[str, Any]:
 
 def detect_bias(**context) -> Dict[str, Any]:
     """Detect bias in data through data slicing."""
+    from pipelines.bias_detection import (
+        BiasAnalyzer,
+        BiasMitigationStrategy,
+        DataSlicer,
+    )
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
@@ -526,6 +621,8 @@ def detect_bias(**context) -> Dict[str, Any]:
 
 def generate_statistics(**context) -> Dict[str, Any]:
     """Generate data statistics and profiles."""
+    from pipelines.validation import DataStatisticsGenerator
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
@@ -592,6 +689,8 @@ def generate_statistics(**context) -> Dict[str, Any]:
 
 def store_processed_data(**context) -> Dict[str, Any]:
     """Store processed data to Firestore and BigQuery."""
+    from database.firestore_client import get_firestore_client
+
     task_id = context["task"].task_id
     pipeline_logger.log_task_start(task_id)
     profiler.start_profiling(task_id)
@@ -687,6 +786,7 @@ def generate_pipeline_report(**context) -> Dict[str, Any]:
 
         # Get performance summary
         perf_summary = profiler.get_profile_summary()
+        bottlenecks = profiler.get_bottlenecks(top_n=5, min_duration_seconds=1.0)
         metrics_summary = monitor.get_metrics_summary()
 
         # Compile final report
@@ -698,12 +798,19 @@ def generate_pipeline_report(**context) -> Dict[str, Any]:
             "bias": bias_report or {},
             "statistics": stats_report or {},
             "performance": perf_summary,
+            "bottlenecks": bottlenecks,
             "metrics": metrics_summary,
         }
 
         # Save report
+        os.makedirs("data/reports", exist_ok=True)
         with open("data/reports/pipeline_report.json", "w") as f:
-            json.dump(final_report, f, indent=2)
+            json.dump(
+                final_report,
+                f,
+                indent=2,
+                default=lambda obj: obj.item() if hasattr(obj, "item") else str(obj),
+            )
 
         logger.info("Pipeline execution completed successfully")
         return final_report
@@ -711,6 +818,22 @@ def generate_pipeline_report(**context) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to generate pipeline report: {e}")
         raise AirflowException(f"Report generation failed: {e}")
+
+
+def should_run_extended_bias_analysis(**context) -> bool:
+    """Gate expensive extended bias analysis tasks for faster daily runs."""
+    raw_value = Variable.get("run_extended_bias_analysis", default_var="false")
+    should_run = str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+    if should_run:
+        logger.info("Extended bias analysis enabled for this run")
+    else:
+        logger.info(
+            "Extended bias analysis skipped; set Airflow Variable "
+            "'run_extended_bias_analysis=true' to enable.",
+        )
+
+    return should_run
 
 
 # ==================== Task Definitions ====================
@@ -749,6 +872,12 @@ task_anomalies = PythonOperator(
 task_bias = PythonOperator(
     task_id="detect_bias",
     python_callable=detect_bias,
+    dag=dag,
+)
+
+task_bias_gate = ShortCircuitOperator(
+    task_id="gate_extended_bias_analysis",
+    python_callable=should_run_extended_bias_analysis,
     dag=dag,
 )
 
@@ -798,10 +927,11 @@ task_preprocess >> [
     task_validate,
     task_anomalies,
     task_bias,
-    task_synthetic_bias_eval,
     task_statistics,
+    task_bias_gate,
 ]
 
+task_bias_gate >> task_synthetic_bias_eval
 task_synthetic_bias_eval >> [task_analyze_bias_slices, task_fairlearn_bias_analysis]
 
 # Final storage and reporting
@@ -810,8 +940,6 @@ task_synthetic_bias_eval >> [task_analyze_bias_slices, task_fairlearn_bias_analy
         task_validate,
         task_anomalies,
         task_bias,
-        task_analyze_bias_slices,
-        task_fairlearn_bias_analysis,
         task_statistics,
     ]
     >> task_storage

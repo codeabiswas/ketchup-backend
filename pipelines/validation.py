@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -452,7 +453,16 @@ class DataStatisticsGenerator:
             stats: Statistics dictionary
             filepath: Path to save statistics
         """
+        parent_dir = os.path.dirname(filepath)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+
         with open(filepath, "w") as f:
-            json.dump(stats, f, indent=2)
+            json.dump(
+                stats,
+                f,
+                indent=2,
+                default=lambda obj: obj.item() if hasattr(obj, "item") else str(obj),
+            )
 
         logger.info(f"Saved statistics to {filepath}")
