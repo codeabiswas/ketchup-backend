@@ -1,483 +1,292 @@
 # Ketchup Backend - Technical Architecture
 
-## System Overview
-
-The Ketchup backend is a Python-based social coordination platform that recommends events by aggregating user availability, preferences, and venue data. This document outlines the technical architecture, data flow, and key design decisions.
-
-## Architecture Layers
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    FastAPI Server                       │
-│              (REST API Gateway, Health Checks)          │
-└────────────────┬────────────────────────────────────────┘
-                 │
-        ┌────────┴────────┐
-        │                 │
-┌───────▼──────┐  ┌──────▼────────┐
-│  API Clients │  │  Data Cache   │
-│ (Calendar,   │  │   (Redis)     │
-│  Maps)       │  └───────────────┘
-└───────┬──────┘
-        │
-┌───────▼──────────────────┐
-│  Data Normalization      │
-│  & Validation            │
-│  (Pydantic Schemas)      │
-└───────┬──────────────────┘
-        │
-        ├─────────────────┬─────────────────┐
-        │                 │                 │
-┌───────▼────────┐ ┌─────▼──────┐  ┌──────▼────────┐
-│  Firestore     │ │ BigQuery   │  │  Airflow     │
-│  (Operations)  │ │(Analytics) │  │(Orchestration)│
-└────────────────┘ └────────────┘  └───────────────┘
-```
-
-## Technology Stack
-
-### Core Framework
-- **FastAPI** - Async REST API framework
-- **Pydantic** - Data validation and schema management
-- **Python 3.10+** - Language runtime
-
-### Data Processing
-- **Pandas** - Data manipulation (future)
-- **NumPy** - Numerical operations (future)
-- **Scikit-learn** - ML models (Phase 2)
-
-### External Services Integration
-- **Google Calendar API** - User availability
-- **Google Places (Tool Call)** - Venue locations and metadata via LLM tool calling
-- **Google Maps Routes API** - Travel time calculations
-
-### Data Storage
-- **Firestore** - Real-time operational database
-- **BigQuery** - Analytics and hypothesis tracking
-- **Redis** - Caching layer
-
-### Orchestration & Monitoring
-- **Apache Airflow** - Workflow orchestration
-- **Langfuse** - LLM request tracing (Phase 2)
-- **Prometheus** - Metrics collection (future)
-
-### Testing & Development
-- **Pytest** - Unit testing framework
-- **Docker Compose** - Local development environment
-- **pytest-cov** - Coverage reporting
-
-## Data Flow
-
-### 1. Data Ingestion Pipeline
-
-```
-External APIs → API Clients / Tools → Raw Data
-    ↓
-  Calendar API         GoogleCalendarClient       JSON Response
-  Google Places API →  LLM Tool Call         →    JSON Response
-  Google Routes API →  GoogleMapsClient      →    JSON Response
-```
-
-**Flow Details:**
-- API clients handle authentication
-- Automatic retries with exponential backoff
-- Redis caching (24-hour TTL)
-- Rate limit handling
-
-### 2. Data Normalization Pipeline
-
-```
-Raw Data (various formats) → DataNormalizer → Canonical Schema
-    ↓
-  {"calendars": {...}}     normalize_calendar_data()     FreeBusyInterval[]
-  {"routes": [...]}        normalize_route()             TravelRoute[]
-```
-
-**Normalization Functions:**
-- `normalize_calendar_data()` - Convert Google Calendar to FreeBusyInterval
-- `normalize_google_place()` - Convert Google Places to VenueMetadata
-- `deduplicate_venues()` - Remove duplicate venues
-- `compress_event_options()` - Optimize for token limits
-
-### 3. Data Validation Pipeline
-
-```
-Canonical Schema → DataValidator Logic → Pass/Fail Decision
-    ↓
-  VenueMetadata ──> validate_venue_metadata()  ──> Stored or Rejected
-  CalendarData ──> validate_calendar_intervals() ──> Stored or Rejected
-  Coordinates ──> validate_location() ──────────> Stored or Rejected
-```
-
-**Validation Checks:**
-- Rating: 0.0 - 5.0
-- Price Level: 1 - 4
-- Coordinates: Valid latitude (-90 to 90°), longitude (-180 to 180°)
-- Calendar intervals: No overlaps, positive duration
-- Venue deduplication: Same name + location within 100m
-
-### 4. Data Storage Pipeline
-
-```
-Validated Data → Storage Layer → Query Services
-    ↓
-VenueMetadata ──→ Firestore ──→ FastAPI Endpoints
-CalendarData ──→ BigQuery ──→ Analytics Queries
-UserPreferences ──> Redis Cache ──> Fast Lookups
-```
-
-**Collections:**
-- **Firestore:** users, groups, venues, calendar_data, votes, event_options, finalized_events, post_event_ratings
-- **BigQuery:** users, venues, events, feedback, pipeline_metrics
-- **Redis:** venue:*, calendar:*, route:*
-
-## Component Details
-
-### API Clients (`utils/api_clients.py`)
-
-**Base Class: CachedAPIClient**
-```python
-class CachedAPIClient:
-    - Redis caching with TTL
-    - Automatic retries (exponential backoff)
-    - Session pooling (HTTPAdapter)
-    - Error handling and logging
-```
-
-**Google Calendar Client**
-- `get_freebusy()` - Fetch user calendar availability
-- `create_event()` - Create event on calendar
-
-**Google Maps Client**
-- `get_route()` - Calculate distance/duration between locations
-
-### Data Normalizer (`utils/data_normalizer.py`)
-
-**DataNormalizer Class**
-- Converts multiple API formats to canonical Pydantic schemas
-- Handles timezone conversion
-- Deduplicates venues
-- Compresses event options
-
-**DataValidator Class**
-- Validates schema constraints
-- Checks value ranges
-- Ensures data consistency
-- Provides detailed error messages
-
-### Database Client (`database/firestore_client.py`)
-
-**FirestoreClient Class**
-- CRUD operations for all entities
-- Singleton pattern for resource efficiency
-- Error logging and retry logic
-- Collection-based organization
-
-**Methods:**
-- User operations: `create_user()`, `get_user()`, `update_user_preferences()`
-- Group operations: `create_group()`, `get_group()`
-- Venue operations: `store_venue_metadata()`, `get_venue()`
-- Vote/feedback: `store_vote()`, `store_post_event_rating()`
-- Event management: `store_event_option()`, `store_final_event()`
-
-### Configuration Management (`config/settings.py`)
-
-**Settings Class**
-- Pydantic BaseSettings for type-safe config
-- Environment variable loading
-- Default values for optional settings
-- Singleton instance for global access
-
-**Configuration Categories:**
-- GCP settings (project, database, credentials)
-- API keys (Google)
-- Redis configuration
-- API resilience (timeout, retries, backoff)
-- Feature flags
-
-### Data Schemas (`models/schemas.py`)
-
-**Core Schemas:**
-- `User` - User profile and preferences
-- `FreeBusyInterval` - Calendar availability
-- `CalendarData` - Aggregated user calendar
-- `VenueMetadata` - Normalized venue information
-- `TravelRoute` - Distance/duration data
-- `EventOption` - Generated event suggestion
-- `Vote` - User's vote on an event
-- `PostEventRating` - Post-event feedback
-
-**Validation:**
-- Field constraints (min/max values)
-- Custom validators
-- Type hints for all fields
-- Example data in docstrings
-
-### FastAPI Server (`api/main.py`)
-
-**Endpoints:**
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/health` | Health check |
-| GET | `/` | Root endpoint |
-| POST | `/api/v1/calendar/extract` | Trigger calendar extraction |
-| POST | `/api/v1/venues/search` | Search venues by location |
-| GET | `/api/v1/pipeline/status` | Get pipeline metrics |
-
-**Middleware:**
-- CORS support for frontend
-- Request logging
-- Error handling
-
-### Airflow DAG (`pipelines/airflow/dags/daily_etl_dag.py`)
-
-**Tasks:**
-1. `extract_calendar_data` - Fetch all users' calendar availability
-2. `extract_venue_data` - Search for diverse venue types
-3. `normalize_and_validate` - Run schema validation
-4. `sync_to_bigquery` - ETL to BigQuery
-5. `report_metrics` - Calculate pipeline KPIs
-
-**Schedule:** Daily at 2 AM UTC
-**Dependencies:** Linear flow with parallel extraction
-
-## Key Design Decisions
-
-### 1. Pydantic for Data Validation
-
-**Why:**
-- Type safety with runtime validation
-- Automatic JSON serialization
-- Clear error messages
-- Built-in FastAPI integration
-
-**Tradeoff:** Overhead for simple types, but catches errors early
-
-### 2. Singleton Pattern for Clients
-
-**Why:**
-- Single database connection
-- Single Redis cache
-- Single API session pool
-
-**Tradeoff:** Global state, but more efficient resource usage
-
-### 3. Firestore for Operational Data
-
-**Why:**
-- Real-time updates
-- Flexible schema
-- GCP integration
-- Scales horizontally
-
-**Tradeoff:** Higher cost at scale, eventual consistency
-
-### 4. BigQuery for Analytics
-
-**Why:**
-- Powerful SQL analytics
-- Cost-effective for large datasets
-- Easy hypothesis testing
-- Built-in ML integration
-
-**Tradeoff:** Eventual consistency, batch nature
-
-### 5. Redis for Caching
-
-**Why:**
-- Fast in-memory access
-- 24-hour TTL for API responses
-- Reduces API costs and latency
-
-**Tradeoff:** Memory cost, cache invalidation complexity
-
-### 6. Airflow for Orchestration
-
-**Why:**
-- Dependency management
-- Retry logic
-- Monitoring and alerting
-- Industry standard
-
-**Tradeoff:** Operational complexity, requires PostgreSQL backend
-
-## Error Handling Strategy
-
-### Levels of Resilience
-
-1. **API Client Level**
-   - Automatic retries with exponential backoff
-   - Circuit breaker pattern (ready)
-   - Request timeouts
-
-2. **Validation Level**
-   - Schema validation with Pydantic
-   - Business logic validation
-   - Detailed error messages
-
-3. **Data Pipeline Level**
-   - Fallback values for missing data
-   - Data deduplication
-   - Partial success handling
-
-4. **Application Level**
-   - Graceful degradation
-   - Error logging
-   - User-friendly error responses
-
-## Performance Optimizations
-
-### Caching Strategy
-
-```
-Request → Check Redis Cache → Found → Return Cached Data
-                    ↓ Not Found
-                    ↓
-            Call External API
-                    ↓
-            Store in Redis (24h TTL)
-                    ↓
-            Return Data to Client
-```
-
-**Cache Keys:**
-
-- `calendar:{user_id}:{date_range}` - Calendar data
-- `route:{origin}:{destination}` - Route calculations
-
-### Parallel Processing
-
-- Calendar extraction: Parallel per user
-- Venue extraction: Parallel per category
-- Data validation: Can be parallelized
-
-### Connection Pooling
-
-- API clients use HTTPAdapter with pool size
-- Firestore client reuses connection
-- Redis connection pool (built-in)
-
-## Security Considerations
-
-### API Key Management
-
-- Environment variables (never in code)
-- `.env` file (never in git via .gitignore)
-- GCP Service Account Key (restricted access)
-
-### Data Privacy
-
-- Calendar data: User IDs only, no personal calendar content
-- Venue data: Public information only
-- Post-event ratings: Anonymized/aggregated
-
-### Input Validation
-
-- All inputs validated via Pydantic
-- No SQL injection (Firestore queries)
-- CORS protection on API endpoints
-
-## Monitoring & Observability
-
-### Logging
-
-```python
-import logging
-logger = logging.getLogger(__name__)
-
-logger.debug("Detailed debugging info")
-logger.info("Pipeline milestone reached")
-logger.warning("Unexpected condition")
-logger.error("Operation failed")
-```
-
-### Metrics (Future)
-
-- API response times
-- Database query latency
-- Cache hit rates
-- Error rates by type
-- Pipeline task duration
-
-### Alerting (Future)
-
-- High error rate (>5%)
-- Slow API responses (>30s)
-- Failed pipeline tasks
-- Database connection issues
-
-## Scalability
-
-### Horizontal Scaling
-
-- Stateless FastAPI instances (scale up/down)
-- Redis cluster (sharding)
-- Firestore auto-scaling
-- BigQuery: Pay-per-query
-
-### Vertical Scaling
-
-- Increase worker processes
-- Increase Airflow parallelism
-- Increase connection pool sizes
-
-### Bottlenecks
-
-1. **API Rate Limits** → Solution: Caching, request batching
-2. **Database Connections** → Solution: Connection pooling
-3. **Memory Usage** → Solution: Streaming, pagination
-4. **Network I/O** → Solution: Parallel requests, local caching
-
-## Testing Strategy
-
-### Unit Tests (80% coverage target)
-- Individual function behavior
-- Error conditions
-- Edge cases
-
-### Integration Tests
-- Component interactions
-- End-to-end data flows
-- Database operations
-
-### Performance Tests
-- Large dataset handling
-- Concurrent request handling
-- Cache effectiveness
-
-## Deployment
-
-### Local Development
-- Docker Compose (Firestore, Redis)
-- Development server with hot reload
-- Sqlite for development (optional)
-
-### Staging
-- GCP Cloud Run for FastAPI
-- Cloud Composer for Airflow
-- Managed Firestore instance
-- Memorystore (Redis)
-
-### Production
-- GKE (Kubernetes) for FastAPI
-- Cloud Composer for Airflow
-- Firestore (multi-region)
-- Memorystore Redis (HA)
-- BigQuery for analytics
-
-## Future Enhancements
-
-### Phase 2
-- LLM integration for event recommendations
-- Langfuse for tracing
-- Preference learning with embeddings
-- RAGAS evaluations
-
-### Phase 3
-- Real-time event updates (WebSocket)
-- Mobile app integration
-- Advanced analytics dashboard
-- ML-based demand prediction
+## 1. System Overview
+
+Ketchup is a Python backend for group-event planning plus a DAG-based data pipeline.
+The repository combines:
+- FastAPI application APIs for users/groups/plans/feedback flows
+- Planner orchestration with OpenAI-compatible tool calling
+- Data pipeline orchestration with Airflow (`daily_etl_pipeline`, `ketchup_comprehensive_pipeline`)
+- Reproducible batch workflow with DVC (`dvc.yaml`)
+
+The current architecture is optimized for local reproducibility with Docker Compose and supports Firestore emulator + Redis + Airflow metadata Postgres.
 
 ---
+
+## 2. Runtime Architecture (Current)
+
+```text
+Client / Frontend
+      |
+      v
+FastAPI (api/main.py)
+  ├─ Route layer (api/routes/*)
+  ├─ Service layer (services/*)
+  ├─ Planner lifecycle (agents/planning.py)
+  └─ Async DB lifecycle (database.connection)
+      |
+      +---- PostgreSQL (app data via asyncpg)
+      +---- Redis (cache for API clients)
+      +---- Firestore (or emulator in local)
+
+Airflow (webserver + scheduler + init)
+  ├─ daily_etl_pipeline
+  ├─ ketchup_comprehensive_pipeline
+  └─ logs + task state in airflow-postgres
+
+DVC (dvc.yaml)
+  └─ script-driven reproducible data stages over data/raw|processed|reports|statistics
+```
+
+---
+
+## 3. Technology Stack (As Implemented)
+
+### Core Backend
+- Python 3.11+
+- FastAPI
+- Pydantic v2 + pydantic-settings
+- asyncpg
+
+### Planner / AI
+- OpenAI Python client (OpenAI-compatible API usage)
+- httpx + tenacity for resilient calls
+
+### Data Pipeline
+- Apache Airflow 2.7.2 (`LocalExecutor` in local stack)
+- Pandas / NumPy in pipeline modules
+- DVC for stage orchestration + data artifact versioning
+
+### Storage / Infra
+- PostgreSQL (app DB + separate Airflow metadata DB)
+- Firestore client (points to emulator in local via `FIRESTORE_EMULATOR_HOST`)
+- Redis cache
+- Docker Compose for local environment
+
+---
+
+## 4. Repository Architecture
+
+```text
+ketchup-backend/
+├─ api/                      # FastAPI app and route registration
+│  └─ routes/                # auth, users, groups, plans, availability, feedback
+├─ services/                 # business logic by domain
+├─ agents/                   # planning orchestration/tool calling
+├─ config/                   # typed settings from env
+├─ database/                 # db connection + firestore client + migrations
+├─ pipelines/                # preprocessing/validation/monitoring + airflow DAGs
+│  └─ airflow/dags/          # daily_etl_dag.py, comprehensive_etl_dag.py
+├─ scripts/                  # DVC stage scripts
+├─ tests/                    # test_pipeline_components.py
+├─ data/                     # raw/processed/metrics/reports/statistics artifacts
+├─ dvc.yaml                  # reproducible stage graph
+├─ docker-compose.yml        # local runtime topology
+├─ README.md
+└─ ARCHITECTURE.md
+```
+
+---
+
+## 5. API Layer Architecture
+
+## 5.1 App Lifecycle (`api/main.py`)
+- On startup:
+  - Connect async DB (`db.connect()`)
+  - Initialize planner client (`init_planner_client()`)
+  - Start invite-expiry background task
+- On shutdown:
+  - Cancel expiry task
+  - Close planner client
+  - Disconnect async DB
+
+## 5.2 Mounted Routers (Current)
+- `POST /api/auth/google-signin`
+- `GET /api/users/me`
+- `PUT /api/users/me/preferences`
+- `GET /api/users/me/availability`
+- `PUT /api/users/me/availability`
+- `POST /api/groups`
+- `GET /api/groups`
+- `GET /api/groups/{group_id}`
+- `PUT /api/groups/{group_id}`
+- `POST /api/groups/{group_id}/invite`
+- `POST /api/groups/{group_id}/invite/accept`
+- `POST /api/groups/{group_id}/invite/reject`
+- `PUT /api/groups/{group_id}/preferences`
+- `POST /api/groups/{group_id}/availability`
+- `POST /api/groups/{group_id}/generate-plans`
+- `GET /api/groups/{group_id}/plans/{round_id}`
+- `POST /api/groups/{group_id}/plans/{round_id}/vote`
+- `GET /api/groups/{group_id}/plans/{round_id}/results`
+- `POST /api/groups/{group_id}/plans/{round_id}/refine`
+- `POST /api/groups/{group_id}/plans/{round_id}/finalize`
+- `POST /api/groups/{group_id}/events/{event_id}/feedback`
+- `GET /api/groups/{group_id}/events/{event_id}/feedback`
+- `GET /health`
+- `GET /`
+
+---
+
+## 6. Data and Integration Architecture
+
+## 6.1 Configuration (`config/settings.py`)
+Typed env-driven settings cover:
+- DB (`database_url`)
+- Planner runtime (`vllm_base_url`, model, timeouts, fallback flags)
+- External integrations (`google_maps_api_key`, `tavily_api_key`)
+- CORS + SMTP + frontend URL
+- Cache/retry controls (`redis_url`, TTL, timeout, retries, backoff)
+- Firestore target (`gcp_project_id`, credentials path, database)
+
+A cached singleton settings object is exposed via `get_settings()` and `settings`.
+
+## 6.2 Firestore Client (`database/firestore_client.py`)
+- Encapsulates Firestore CRUD and query operations
+- Supports credentialed or default client initialization
+- Uses singleton access via `get_firestore_client()`
+- Includes `get_all_users(active_only=True)` used by DAG acquisition tasks
+
+## 6.3 API Clients (`utils/api_clients.py`)
+- Base cached client with Redis + requests retry adapter
+- Google Calendar client and Google Maps client wrappers
+- Graceful behavior when Redis cache is unavailable
+
+---
+
+## 7. Pipeline Architecture
+
+## 7.1 Airflow DAGs
+
+### A) `daily_etl_pipeline` (`pipelines/airflow/dags/daily_etl_dag.py`)
+Flow:
+1. `extract_calendar_data`
+2. `extract_venue_data`
+3. `normalize_and_validate`
+4. `sync_to_bigquery`
+5. `report_metrics`
+
+Notes:
+- Designed as a daily operational ETL path
+- Includes task-level logging and retry behavior
+
+### B) `ketchup_comprehensive_pipeline` (`pipelines/airflow/dags/comprehensive_etl_dag.py`)
+High-level stages:
+1. Data acquisition
+2. Preprocessing
+3. Validation
+4. Anomaly detection
+5. Bias checks
+6. Statistics generation
+7. Storage
+8. Final report
+
+Important implementation details:
+- Parse-safe fallback classes for logger/monitor/profiler if monitoring imports fail
+- Runtime gate for heavy extended bias branch via Airflow Variable:
+  - `run_extended_bias_analysis` (default false)
+- Includes bottleneck summaries in final pipeline report
+- Added guards for empty datasets / missing columns in preprocessing
+- Report/statistics file writes create missing directories and handle NumPy scalar serialization
+
+## 7.2 Monitoring (`pipelines/monitoring.py`)
+- `PipelineLogger` for structured task logs (JSON logger when available)
+- `PipelineMonitor` for metric recording and summaries
+- `PerformanceProfiler` for task durations and bottleneck extraction
+- Optional `AnomalyAlert` integrations (Slack/email)
+
+---
+
+## 8. DVC Stage Architecture (`dvc.yaml`)
+
+Current stage graph includes:
+1. `acquire_data`
+2. `acquire_user_feedback`
+3. `preprocess_data`
+4. `validate_data`
+5. `detect_anomalies`
+6. `detect_bias`
+7. `generate_synthetic_eval_data`
+8. `analyze_bias_slices`
+9. `fairlearn_bias_analysis`
+10. `generate_statistics`
+
+Outputs/metrics are tracked under:
+- `data/raw/`
+- `data/processed/`
+- `data/metrics/`
+- `data/reports/`
+- `data/statistics/`
+
+---
+
+## 9. Local Deployment Architecture (`docker-compose.yml`)
+
+Services:
+- `firestore-emulator`
+- `redis`
+- `postgres` (app DB)
+- `airflow-postgres` (Airflow metadata)
+- `airflow-init`
+- `airflow-scheduler`
+- `airflow-webserver`
+- `backend`
+
+Notable runtime wiring:
+- Airflow services run with `PYTHONPATH=/opt/airflow`
+- Airflow extras install includes compatibility pins for pydantic stack and planner deps
+- Airflow + backend both use `FIRESTORE_EMULATOR_HOST=firestore-emulator:8080`
+- Shared source mount enables DAGs/scripts to run current workspace code
+
+---
+
+## 10. Reliability and Error Handling
+
+Current resilience patterns in codebase:
+- Task-level `try/except` with explicit `AirflowException` for actionable retries/failures
+- Fallback monitoring objects prevent DAG parse-time hard failures
+- Local run hardening:
+  - Firestore emulator dependency explicitly required in startup commands
+  - Preprocess/stat/report tasks robust to empty inputs and serialization edge cases
+- Database package import guard in `database/__init__.py` to reduce import-side breakage
+
+---
+
+## 11. Performance and Flow Optimization
+
+Implemented optimization controls:
+- Parallelizable acquisition branches in DAG flow
+- Optional heavy bias branch gated by `run_extended_bias_analysis`
+- Profiling and bottleneck extraction via `PerformanceProfiler.get_bottlenecks()`
+- Airflow Gantt + task duration views are the primary operational bottleneck inspection tools
+
+Useful query (Airflow metadata DB) for slow-task ranking:
+```sql
+select task_id,
+       round(avg(extract(epoch from (end_date-start_date)))::numeric,2) as avg_s,
+       count(*)
+from task_instance
+where dag_id='ketchup_comprehensive_pipeline'
+  and state='success'
+  and end_date is not null
+group by task_id
+order by avg_s desc;
+```
+
+---
+
+## 12. Known Operational Notes
+
+- If tasks fail with Firestore DNS errors (`firestore-emulator` not found), start/check emulator container first.
+- Some historical failed runs may remain in Airflow metadata; validate current behavior using a fresh run ID.
+- Extended bias tasks can be intentionally skipped when gate variable is disabled (expected behavior, not failure).
+
+---
+
+## 13. Summary
+
+The current architecture is a layered FastAPI + Airflow + DVC system with:
+- Clear separation of API, services, data access, and pipeline orchestration
+- Reproducible local environment via Docker Compose
+- Reproducible data workflow via DVC stages
+- Practical runtime hardening for local reliability and assignment-focused evaluation criteria
