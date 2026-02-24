@@ -1,8 +1,5 @@
 # Ketchup Data Pipeline Submission Notes
 
-This document maps the current pipeline implementation to the assignment rubric in
-`data_pipeline___MLOPS-1-2.pdf`.
-
 ## Scope and Architecture
 
 Pipeline and runtime share one source of truth: Postgres.
