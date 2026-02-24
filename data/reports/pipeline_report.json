@@ -1,0 +1,54 @@
+{
+  "pipeline_run_date": "2026-02-24T03:30:53.623569",
+  "status": "completed",
+  "validation": {
+    "calendar_schema_passed": false,
+    "venue_schema_passed": false,
+    "calendar_range_passed": false,
+    "venue_range_passed": false,
+    "all_passed": false,
+    "issues": [
+      "Missing required column: user_id",
+      "Missing required column: num_busy_intervals",
+      "Missing required column: availability_percentage",
+      "Missing required column: total_busy_hours",
+      "Missing required column: venue_id",
+      "Missing required column: name",
+      "Missing required column: rating",
+      "Missing required column: price_level",
+      "Column not found: availability_percentage",
+      "Column not found: rating"
+    ]
+  },
+  "anomalies": {
+    "timestamp": "2026-02-24T03:25:49.265836",
+    "calendar_missing_values": 0,
+    "calendar_duplicates": 0,
+    "venue_missing_values": 0,
+    "venue_outliers": 1,
+    "anomalies_detected": true,
+    "details": {
+      "calendar_issues": [],
+      "venue_issues": [
+        "Column not found: rating"
+      ]
+    }
+  },
+  "bias": {},
+  "statistics": {
+    "timestamp": "2026-02-24T03:25:49.284876",
+    "calendar_records": 0,
+    "venue_records": 0,
+    "calendar_columns": 0,
+    "venue_columns": 0,
+    "calendar_stats_saved": true,
+    "venue_stats_saved": true
+  },
+  "performance": {
+    "total_tasks": 0,
+    "total_duration": 0,
+    "tasks": {}
+  },
+  "bottlenecks": [],
+  "metrics": {}
+}

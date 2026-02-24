@@ -72,6 +72,25 @@ class FirestoreClient:
             logger.error(f"Error retrieving user {user_id}: {e}")
             raise
 
+    def get_all_users(self, active_only: bool = True) -> List[Dict[str, Any]]:
+        """Retrieve all users, optionally filtered to active users only."""
+        try:
+            query = self.db.collection("users")
+            if active_only:
+                query = query.where("active", "==", True)
+
+            docs = query.stream()
+            users: List[Dict[str, Any]] = []
+            for doc in docs:
+                user = doc.to_dict()
+                user.setdefault("user_id", doc.id)
+                users.append(user)
+
+            return users
+        except Exception as e:
+            logger.error(f"Error retrieving users: {e}")
+            raise
+
     def update_user_preferences(
         self,
         user_id: str,

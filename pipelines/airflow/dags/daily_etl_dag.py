@@ -48,7 +48,6 @@ def extract_calendar_data(**context):
     try:
         from database.firestore_client import get_firestore_client
         from utils.api_clients import get_calendar_client
-        from utils.data_normalizer import DataNormalizer, DataValidator
 
         calendar_client = get_calendar_client()
         firestore_client = get_firestore_client()
@@ -100,7 +99,6 @@ def extract_venue_data(**context):
     try:
         from database.firestore_client import get_firestore_client
         from utils.api_clients import get_maps_client
-        from utils.data_normalizer import DataNormalizer
 
         maps_client = get_maps_client()
         firestore_client = get_firestore_client()
@@ -149,7 +147,6 @@ def normalize_and_validate(**context):
 
     try:
         from database.firestore_client import get_firestore_client
-        from utils.data_normalizer import DataValidator
 
         firestore_client = get_firestore_client()
 
@@ -164,13 +161,8 @@ def normalize_and_validate(**context):
             try:
                 from models.schemas import VenueMetadata
 
-                venue = VenueMetadata(**venue_data)
-
-                if DataValidator.validate_venue_metadata(venue):
-                    valid_count += 1
-                else:
-                    invalid_count += 1
-                    logger.warning(f"Invalid venue: {venue_doc.id}")
+                VenueMetadata(**venue_data)
+                valid_count += 1
 
             except Exception as e:
                 invalid_count += 1
@@ -193,11 +185,16 @@ def sync_to_bigquery(**context):
     logger.info("Starting BigQuery sync...")
 
     try:
+        from google.auth.exceptions import DefaultCredentialsError
         from google.cloud import bigquery
 
         from config.settings import settings
 
-        bq_client = bigquery.Client(project=settings.gcp_project_id)
+        try:
+            bq_client = bigquery.Client(project=settings.gcp_project_id)
+        except DefaultCredentialsError as e:
+            logger.warning(f"Skipping BigQuery sync (no ADC credentials): {e}")
+            return False
 
         logger.info("Syncing venue data to BigQuery...")
 

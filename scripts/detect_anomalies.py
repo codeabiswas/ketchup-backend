@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import logging
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
 from pipelines.validation import AnomalyDetector, ValidationResult
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def _summarize_result(result: ValidationResult) -> dict:
@@ -21,38 +29,48 @@ def _summarize_result(result: ValidationResult) -> dict:
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1]
-    processed_dir = root / "data" / "processed"
-    reports_dir = root / "data" / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        root = Path(__file__).resolve().parents[1]
+        processed_dir = root / "data" / "processed"
+        reports_dir = root / "data" / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
 
-    calendar_df = pd.read_csv(processed_dir / "calendar_processed.csv")
+        input_path = processed_dir / "calendar_processed.csv"
+        if not input_path.exists():
+            raise FileNotFoundError(
+                f"Processed dataset missing: {input_path}. Run preprocess_data first.",
+            )
 
-    calendar_missing = AnomalyDetector.detect_missing_values(calendar_df, 10.0)
-    calendar_duplicates = AnomalyDetector.detect_duplicates(
-        calendar_df,
-        subset=["user_id"],
-    )
-    calendar_outliers = AnomalyDetector.detect_outliers(
-        calendar_df,
-        column="total_busy_hours",
-        method="iqr",
-    )
+        calendar_df = pd.read_csv(input_path)
 
-    report = {
-        "generated_at": datetime.utcnow().isoformat(),
-        "calendar": {
-            "missing_values": _summarize_result(calendar_missing),
-            "duplicates": _summarize_result(calendar_duplicates),
-            "outliers": _summarize_result(calendar_outliers),
-        },
-    }
+        calendar_missing = AnomalyDetector.detect_missing_values(calendar_df, 10.0)
+        calendar_duplicates = AnomalyDetector.detect_duplicates(
+            calendar_df,
+            subset=["user_id"],
+        )
+        calendar_outliers = AnomalyDetector.detect_outliers(
+            calendar_df,
+            column="total_busy_hours",
+            method="iqr",
+        )
 
-    report_path = reports_dir / "anomaly_report.json"
-    with report_path.open("w", encoding="utf-8") as handle:
-        json.dump(report, handle, indent=2)
+        report = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "calendar": {
+                "missing_values": _summarize_result(calendar_missing),
+                "duplicates": _summarize_result(calendar_duplicates),
+                "outliers": _summarize_result(calendar_outliers),
+            },
+        }
 
-    print(f"Saved anomaly report to {report_path}")
+        report_path = reports_dir / "anomaly_report.json"
+        with report_path.open("w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2)
+
+        logger.info("Saved anomaly report to %s", report_path)
+    except Exception:
+        logger.exception("Anomaly detection stage failed")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
