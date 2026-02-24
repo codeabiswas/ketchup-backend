@@ -59,6 +59,9 @@ def main() -> None:
             "availability_percentage": np.floating,
             "num_busy_intervals": np.integer,
             "total_busy_hours": np.floating,
+            "availability_category": np.object_,
+            "busy_intensity": np.floating,
+            "availability_score": np.floating,
         }
 
         calendar_schema_result = SchemaValidator.validate_schema(

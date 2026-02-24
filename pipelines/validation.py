@@ -77,7 +77,11 @@ class SchemaValidator:
             pass
 
         if expected_type in (object, np.object_, str, np.str_):
-            return bool(pd.api.types.is_object_dtype(dtype) or pd.api.types.is_string_dtype(dtype))
+            return bool(
+                pd.api.types.is_object_dtype(dtype)
+                or pd.api.types.is_string_dtype(dtype)
+                or pd.api.types.is_categorical_dtype(dtype)
+            )
 
         try:
             return bool(np.issubdtype(dtype, expected_type))
@@ -93,7 +97,9 @@ class SchemaValidator:
                 issues.append(f"Missing required column: {col}")
                 continue
 
-            if not SchemaValidator._column_matches_expected_type(df[col], expected_type):
+            if not SchemaValidator._column_matches_expected_type(
+                df[col], expected_type
+            ):
                 issues.append(
                     f"Column {col} has type {df[col].dtype}, "
                     f"expected {expected_type}",

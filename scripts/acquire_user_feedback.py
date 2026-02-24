@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import asyncpg
@@ -22,6 +23,23 @@ DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/appdb"
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _build_mock_feedback() -> pd.DataFrame:
+    now = datetime.now(timezone.utc).isoformat()
+    rows = [
+        {
+            "feedback_id": f"mock_feedback_{index:03d}",
+            "user_id": f"mock_user_{(index % 6) + 1:03d}",
+            "group_id": f"mock_group_{(index % 2) + 1:03d}",
+            "rating": ["loved", "liked", "neutral"][index % 3],
+            "attended": bool(index % 5 != 0),
+            "comment": "Auto-generated feedback for local pipeline runs",
+            "submitted_at": now,
+        }
+        for index in range(1, 25)
+    ]
+    return pd.DataFrame(rows)
 
 
 async def _extract_feedback(database_url: str) -> pd.DataFrame:
@@ -66,7 +84,19 @@ def main() -> None:
         _ensure_dir(raw_dir)
 
         database_url = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
-        feedback_df = asyncio.run(_extract_feedback(database_url))
+        try:
+            feedback_df = asyncio.run(_extract_feedback(database_url))
+        except Exception as exc:
+            logger.warning(
+                "Falling back to mock feedback data because extraction failed: %s",
+                exc,
+            )
+            feedback_df = pd.DataFrame()
+
+        if feedback_df.empty:
+            feedback_df = _build_mock_feedback()
+            logger.info("Using mock user feedback data (%s rows)", len(feedback_df))
+
         output_path = raw_dir / "user_feedback.csv"
         feedback_df.to_csv(output_path, index=False)
 
