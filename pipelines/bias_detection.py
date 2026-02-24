@@ -67,7 +67,9 @@ class DataSlicer:
         grouped = df.groupby(valid_cols, dropna=False)
         for key, strata_df in grouped:
             key_tuple = key if isinstance(key, tuple) else (key,)
-            label = ",".join(f"{col}={value}" for col, value in zip(valid_cols, key_tuple))
+            label = ",".join(
+                f"{col}={value}" for col, value in zip(valid_cols, key_tuple)
+            )
             strata[label] = strata_df
 
         return strata
@@ -168,7 +170,8 @@ class BiasAnalyzer:
             positive_label,
         )
 
-        rate_std = np.std(list(selection_rates.values()))
+        rate_values = list(selection_rates.values())
+        rate_std = np.std(rate_values) if rate_values else 0.0
         for slice_name, rate in selection_rates.items():
             is_biased = rate_std > thresholds.get("selection_rate_std", 0.05)
             bias_metrics.append(
@@ -191,8 +194,8 @@ class BiasAnalyzer:
 
             tpr_values = [v["TPR"] for v in odds.values()]
             fpr_values = [v["FPR"] for v in odds.values()]
-            tpr_std = np.std(tpr_values)
-            fpr_std = np.std(fpr_values)
+            tpr_std = np.std(tpr_values) if tpr_values else 0.0
+            fpr_std = np.std(fpr_values) if fpr_values else 0.0
 
             for slice_name, metrics in odds.items():
                 bias_metrics.append(
@@ -318,9 +321,13 @@ class BiasMitigationStrategy:
 
             proportional = int(round(sample_size * (len(strata_df) / len(df))))
             n = max(1, min(len(strata_df), proportional))
-            n = min(n, remaining_slots - (remaining_groups - 1)) if remaining_groups > 1 else min(
-                n,
-                remaining_slots,
+            n = (
+                min(n, remaining_slots - (remaining_groups - 1))
+                if remaining_groups > 1
+                else min(
+                    n,
+                    remaining_slots,
+                )
             )
             n = max(1, min(n, len(strata_df), remaining_slots))
 

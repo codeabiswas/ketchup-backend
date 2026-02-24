@@ -70,6 +70,19 @@ Primary code paths:
 - Bias slicing and mitigation report generation in:
   - `scripts/detect_bias.py`
   - `pipelines/bias_detection.py`
+- Slicing dimensions:
+  - `availability_category` via `DataSlicer.slice_by_demographic`
+  - optional multi-feature/grouped slicing via `slice_by_multiple_features` and `create_demographic_strata`
+- Metrics tracked per slice:
+  - selection rate (statistical parity)
+  - true positive rate (TPR)
+  - false positive rate (FPR)
+  - disparate impact ratio utility for group-to-group comparison
+- Mitigation techniques implemented/documented:
+  - recommendation generation in `generate_mitigation_report` (active in `scripts/detect_bias.py`)
+  - `BiasMitigationStrategy.resample_underrepresented`
+  - `BiasMitigationStrategy.stratified_sampling`
+- Trade-off documentation is captured in generated bias report outputs (`data/reports/bias_report.json`) and can be extended with model-level evaluation metrics.
 
 10. Flow optimization
 - Comprehensive DAG report includes:

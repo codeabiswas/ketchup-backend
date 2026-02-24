@@ -24,6 +24,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _serialize_metrics(metrics: list) -> list[dict]:
+    return [
+        {
+            "slice": m.slice_name,
+            "metric": m.metric_name,
+            "value": float(m.value),
+            "threshold": float(m.threshold),
+            "is_biased": bool(m.is_biased),
+        }
+        for m in metrics
+    ]
+
+
 def main() -> None:
     try:
         root = Path(__file__).resolve().parents[1]
@@ -68,18 +81,52 @@ def main() -> None:
             biased_slices,
         )
 
+        mitigation_execution = {
+            "applied": False,
+            "methods": [],
+            "post_mitigation_biased_slices": [],
+            "post_mitigation_bias_metrics": [],
+        }
+
+        if biased_slices and not calendar_df.empty:
+            mitigated_df = BiasMitigationStrategy.resample_underrepresented(
+                calendar_df,
+                group_column="availability_category",
+                target_column="selected",
+            )
+            mitigated_df = BiasMitigationStrategy.stratified_sampling(
+                mitigated_df,
+                strata_columns=["availability_category"],
+                sample_size=len(mitigated_df),
+            )
+
+            mitigated_slices = DataSlicer.slice_by_demographic(
+                mitigated_df,
+                "availability_category",
+            )
+            mitigated_metrics = BiasAnalyzer.detect_bias_in_slices(
+                mitigated_slices,
+                target_column="selected",
+                prediction_column="predicted_selected",
+                positive_label=1,
+            )
+            mitigated_biased_slices = sorted(
+                {m.slice_name for m in mitigated_metrics if m.is_biased},
+            )
+
+            mitigation_execution = {
+                "applied": True,
+                "methods": [
+                    "BiasMitigationStrategy.resample_underrepresented",
+                    "BiasMitigationStrategy.stratified_sampling",
+                ],
+                "post_mitigation_biased_slices": mitigated_biased_slices,
+                "post_mitigation_bias_metrics": _serialize_metrics(mitigated_metrics),
+            }
+
         report = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "bias_metrics": [
-                {
-                    "slice": m.slice_name,
-                    "metric": m.metric_name,
-                    "value": float(m.value),
-                    "threshold": float(m.threshold),
-                    "is_biased": bool(m.is_biased),
-                }
-                for m in bias_metrics
-            ],
+            "bias_metrics": _serialize_metrics(bias_metrics),
             "mitigation_report": json.loads(
                 json.dumps(
                     mitigation_report,
@@ -92,6 +139,7 @@ def main() -> None:
                     ),
                 ),
             ),
+            "mitigation_execution": mitigation_execution,
         }
 
         report_path = reports_dir / "bias_report.json"
