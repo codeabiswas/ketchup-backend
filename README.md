@@ -23,9 +23,15 @@ ketchup-backend/
 ├─ agents/
 ├─ config/
 ├─ data/
+│  ├─ raw/
+│  ├─ processed/
+│  ├─ metrics/
+│  ├─ reports/
+│  └─ statistics/
 ├─ database/
 ├─ pipelines/
-│  └─ airflow/dags/
+│  ├─ airflow/
+│  │  └─ dags/
 ├─ scripts/
 ├─ services/
 ├─ tests/
@@ -34,8 +40,7 @@ ketchup-backend/
 ├─ docker-compose.yml
 ├─ requirements.txt
 ├─ README.md
-├─ data_pipeline.md
-└─ ARCHITECTURE.md
+└─ data_pipeline.md
 ```
 
 ## Setup

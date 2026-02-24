@@ -133,63 +133,7 @@ Relevant files:
 
 ---
 
-## 4) Additional Guidelines (Implemented)
-
-### 4.1 Folder Structure
-
-```text
-ketchup-backend/
-├─ api/
-├─ agents/
-├─ config/
-├─ data/
-│  ├─ raw/
-│  ├─ processed/
-│  ├─ metrics/
-│  ├─ reports/
-│  └─ statistics/
-├─ database/
-├─ pipelines/
-│  ├─ airflow/
-│  │  └─ dags/
-├─ scripts/
-├─ services/
-├─ tests/
-├─ logs/
-├─ dvc.yaml
-├─ docker-compose.yml
-├─ requirements.txt
-├─ README.md
-└─ data_pipeline.md
-```
-
-### 4.2 README Documentation
-- Environment setup
-- Steps to run DAGs and DVC pipeline
-- Code structure summary
-- Reproducibility and data versioning workflow
-
-### 4.3 Reproducibility
-Anyone should be able to:
-1. Clone the repository
-2. Install dependencies
-3. Start local services
-4. Run DVC and/or Airflow pipeline
-5. Reproduce outputs and reports
-
-### 4.4 Code Style
-- Modular files by concern (`scripts`, `pipelines`, `services`, `utils`).
-- Python code follows readable, maintainable structure.
-- `pytest` tests exist for pipeline logic.
-
-### 4.5 Error Handling & Logging
-- Stage-level `try/except` with explicit task failures.
-- Logs include failure reasons for troubleshooting.
-- Pipeline handles common local-runtime failures (empty data, output directories, JSON serialization).
-
----
-
-## 5) Evaluation Criteria Mapping
+## 4) Implementation Details
 
 1. **Proper Documentation**: covered in README and this submission document.
 2. **Modular Code**: split into scripts, pipelines, services, utils, agents.
@@ -206,31 +150,9 @@ Anyone should be able to:
 
 ---
 
-## 6) Environment Setup
+## 5) Running the Pipeline
 
-### 6.1 Prerequisites
-- Python 3.11+
-- Docker Desktop + Docker Compose
-- Git
-- DVC (`pip install dvc` if not installed)
-- uv
-
-### 6.2 Python Setup
-```bash
-uv venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-# source .venv/bin/activate
-
-uv sync --all-groups
-```
-
----
-
-## 7) Running the Pipeline
-
-### 7.1 Start Local Services
+### 5.1 Start Local Services
 ```bash
 docker compose up -d firestore-emulator redis airflow-postgres airflow-init airflow-scheduler airflow-webserver
 ```
@@ -239,7 +161,7 @@ Airflow UI:
 - URL: `http://localhost:8081`
 - Default local credentials: `admin / admin`
 
-### 7.2 Run Airflow DAGs
+### 5.2 Run Airflow DAGs
 ```bash
 # List DAGs
 docker compose exec airflow-webserver airflow dags list
@@ -258,7 +180,7 @@ docker compose exec airflow-webserver airflow variables set run_extended_bias_an
 docker compose exec airflow-webserver airflow variables set run_extended_bias_analysis false
 ```
 
-### 7.3 Run DVC Pipeline
+### 5.3 Run DVC Pipeline
 ```bash
 # Reproduce all DVC stages
 dvc repro
@@ -268,7 +190,7 @@ dvc repro
 
 ---
 
-## 8) Reproducibility Runbook (Clone to Output)
+## 6) Reproducibility Runbook (Clone to Output)
 
 ```bash
 git clone <repo-url>
@@ -296,7 +218,7 @@ Expected generated artifacts include:
 
 ---
 
-## 9) Useful Verification Commands
+## 7) Useful Verification Commands
 
 ```bash
 # Show task states for a specific run
@@ -308,7 +230,7 @@ docker compose exec airflow-postgres psql -U airflow -d airflow -c "select task_
 
 ---
 
-## 10) Troubleshooting (Common Local Issues)
+## 8) Troubleshooting (Common Local Issues)
 
 ### Firestore emulator DNS error in Airflow
 If logs show `DNS resolution failed for firestore-emulator:8080`:
@@ -323,7 +245,7 @@ docker compose ps firestore-emulator
 
 ---
 
-## 11) Quick Summary
+## 9) Quick Summary
 
 This repository already includes the required pipeline features for the assignment:
 - Airflow DAG orchestration
