@@ -1,5 +1,3 @@
-# database/__init__.py
-
 """Data persistence layer."""
 
 try:
