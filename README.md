@@ -150,11 +150,12 @@ These write generated outputs under `data/reports/` and document slice-based bia
 
 ## Tool-Calling Benchmark
 
-For a detached 25-example tool-calling smoke test against a running vLLM endpoint, use:
+For a detached 25-example synthetic tool-calling benchmark against a running vLLM endpoint, use:
 
 - `python scripts/evaluate_tool_calling_bfcl.py --model <served-model-name>`
+- `python scripts/evaluate_tool_calling_bfcl.py --model <served-model-name> --wandb-project <project>`
 
-This uses a sampled 25-example slice of BFCL's executable simple subset from Hugging Face and writes a JSON summary under `data/reports/`.
+This uses a local synthetic dataset in `data/benchmarks/synthetic_group_outings_tool_calling.json` with diverse group-outing requests, mock Google Maps-style tools, web-search cases, and no-tool abstain cases. Decision and tool-name checks are exact, but argument quality is scored semantically by an LLM judge using the served model. The script writes a JSON summary under `data/reports/` and can log per-example running metrics plus final results to Weights & Biases.
 
 ## Troubleshooting
 
