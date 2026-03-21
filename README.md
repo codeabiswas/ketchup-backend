@@ -29,6 +29,12 @@ cp .env.example .env
 docker compose up --build db api
 ```
 
+To run the repo with the local standalone vLLM server added in this branch:
+
+```bash
+docker compose --profile llm up --build db vllm api
+```
+
 3) Start pipeline worker (separate terminal):
 
 ```bash
@@ -102,6 +108,17 @@ Planner behavior:
 - `PLANNER_NOVELTY_TARGET_REFINE`
 - `PLANNER_FALLBACK_ENABLED`
 
+Standalone vLLM service:
+
+- `HF_TOKEN`
+- `VLLM_MODEL_REPO`
+- `VLLM_MODEL_DIR`
+- `VLLM_MODEL_PATH`
+- `VLLM_GPU_MEMORY_UTILIZATION`
+- `VLLM_MAX_MODEL_LEN`
+- `VLLM_MAX_NUM_SEQS`
+- `VLLM_TOOL_CALL_PARSER`
+
 Tooling:
 
 - `GOOGLE_MAPS_API_KEY` for Maps tools
@@ -119,6 +136,26 @@ For vLLM auto tool-calling, run vLLM with:
 - `--enable-auto-tool-choice`
 - `--tool-call-parser <model-compatible-parser>`
 
+This branch adds a dedicated standalone vLLM server surface in `vllm/` for that purpose. The backend still remains the planner orchestrator; the vLLM service is only the raw model endpoint.
+
+## Model Bias Scripts
+
+For Section 2.4 and Section 2.5 work, use:
+
+- `python scripts/run_model_bias_synthetic_eval.py`
+- `python scripts/check_model_bias_slices.py`
+- `python scripts/check_model_bias_fairlearn.py`
+
+These write generated outputs under `data/reports/` and document slice-based bias checks for the planning model.
+
+## Tool-Calling Benchmark
+
+For a detached 25-example tool-calling smoke test against a running vLLM endpoint, use:
+
+- `python scripts/evaluate_tool_calling_bfcl.py --model <served-model-name>`
+
+This uses a sampled 25-example slice of BFCL's executable simple subset from Hugging Face and writes a JSON summary under `data/reports/`.
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
@@ -132,3 +169,5 @@ For vLLM auto tool-calling, run vLLM with:
 - `data_pipeline.md`
 - `gcp.md`
 - `agents/README.md`
+- `vllm/README.md`
+- `pipelines/model_bias.md`

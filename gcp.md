@@ -38,6 +38,21 @@ If using vLLM tool-calling:
 - `--enable-auto-tool-choice`
 - `--tool-call-parser hermes` (or parser matching model/template)
 
+Build and push the model-serving image to Artifact Registry:
+
+```bash
+ENVIRONMENT="${ENVIRONMENT:-dev}"
+./scripts/push_vllm_image.sh "$PROJECT_ID" "$REGION" "ketchup-vllm-${ENVIRONMENT}" "qwen3-4b-2507-vllm"
+```
+
+Equivalent Cloud Build invocation:
+
+```bash
+gcloud builds submit \
+  --config vllm/cloudbuild.yaml \
+  --substitutions _LOCATION="$REGION",_REPO="ketchup-vllm-${ENVIRONMENT}",_NAME="qwen3-4b-2507-vllm"
+```
+
 Capture URL:
 
 ```bash

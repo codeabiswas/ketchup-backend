@@ -70,18 +70,29 @@ Primary code paths:
 - Bias slicing and mitigation report generation in:
   - `scripts/detect_bias.py`
   - `pipelines/bias_detection.py`
+- Model-specific slicing scripts for Section 2.4 / 2.5 deliverables:
+  - `scripts/run_model_bias_synthetic_eval.py`
+  - `scripts/check_model_bias_slices.py`
+  - `scripts/check_model_bias_fairlearn.py`
+  - `pipelines/model_bias.md`
 - Slicing dimensions:
   - `availability_category` via `DataSlicer.slice_by_demographic`
   - optional multi-feature/grouped slicing via `slice_by_multiple_features` and `create_demographic_strata`
+  - model-eval slices such as `city_tier`, `budget_tier`, `distance_bucket`, and `car_ratio_bucket`
 - Metrics tracked per slice:
   - selection rate (statistical parity)
   - true positive rate (TPR)
   - false positive rate (FPR)
   - disparate impact ratio utility for group-to-group comparison
+  - model-eval metrics such as `budget_compliance`, `distance_compliance`, and `logistics_feasible`
 - Mitigation techniques implemented/documented:
   - recommendation generation in `generate_mitigation_report` (active in `scripts/detect_bias.py`)
   - `BiasMitigationStrategy.resample_underrepresented`
   - `BiasMitigationStrategy.stratified_sampling`
+  - model-side guardrails documented in `pipelines/model_bias.md`:
+    - budget prefiltering
+    - validate then repair
+    - low-coverage fallback mode
 - Trade-off documentation is captured in generated bias report outputs (`data/reports/bias_report.json`) and can be extended with model-level evaluation metrics.
 
 10. Flow optimization
