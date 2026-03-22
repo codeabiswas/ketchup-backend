@@ -779,6 +779,13 @@ def main() -> None:
         help="Max tokens for the argument-judge completion.",
     )
     args = parser.parse_args()
+    args.model = args.model.strip()
+    if args.base_url is not None:
+        args.base_url = args.base_url.strip()
+    if args.model_ref is not None:
+        args.model_ref = args.model_ref.strip()
+    if args.judge_model is not None:
+        args.judge_model = args.judge_model.strip()
 
     dataset_path = Path(args.dataset_path)
     dataset = _load_dataset(dataset_path)

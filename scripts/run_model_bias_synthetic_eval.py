@@ -399,6 +399,8 @@ def main() -> None:
         help="Print raw model outputs for the first N parse failures.",
     )
     args = parser.parse_args()
+    args.base_url = args.base_url.strip()
+    args.model = args.model.strip()
 
     random.seed(args.seed)
     session = requests.Session()
