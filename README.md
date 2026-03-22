@@ -1,6 +1,9 @@
 # Ketchup Backend
 
-FastAPI backend plus data pipeline for planning, voting, and analytics feature materialization. For a deeper dive on the methodology this takes for the data pipeline, please refer to `data_pipeline.md`.
+FastAPI backend plus data pipeline for planning, voting, and analytics feature materialization. 
+
+- For a deeper dive on the methodology this takes for the data pipeline, please refer to `data_pipeline.md`.
+- For a deeper dive on the methodology this takes for the model pipeline, please refer to `model-pipeline.md`.
 
 ## What This Repo Owns
 
@@ -42,7 +45,7 @@ docker compose --profile llm up --build db vllm api
 docker compose --profile pipeline up --build -d db pipeline
 ```
 
-4) Run pipeline actions through the pipeline container:
+4) Run data pipeline actions through the pipeline container:
 
 ```bash
 # Re-run all DVC stages end-to-end (forces recomputation)
@@ -85,6 +88,10 @@ Notes:
 - Pipeline container uses Python 3.11 for Airflow compatibility (`Dockerfile.pipeline`).
 - Both images install dependencies with `uv`.
 - Backend Compose DB is internal-only (no host port binding) to avoid clashes with `ketchup-local`.
+
+---
+
+# Model Development Pipeline Overview
 
 ## Environment Variables
 
@@ -201,6 +208,7 @@ Important:
 
 ## Related Docs
 
+- `model-pipeline.md`
 - `data_pipeline.md`
 - `gcp.md`
 - `agents/README.md`
