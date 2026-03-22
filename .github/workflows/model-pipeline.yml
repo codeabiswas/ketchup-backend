@@ -13,12 +13,18 @@ on:
       - "dvc.yaml"
   workflow_dispatch:
 
+concurrency:
+  group: model-pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   model-bias-evaluation:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
-      VLLM_BASE_URL: ${{ vars.VLLM_BASE_URL || 'http://localhost:8081' }}
+      VLLM_BASE_URL: ${{ vars.VLLM_BASE_URL || '' }}
       VLLM_MODEL: ${{ vars.VLLM_MODEL || 'Qwen/Qwen3-4B-Instruct-2507' }}
+      VLLM_HEALTH_URL: ${{ vars.VLLM_HEALTH_URL || '' }}
 
     steps:
       - name: Checkout repository
@@ -30,19 +36,43 @@ jobs:
           python-version: "3.12"
 
       - name: Install pipeline dependencies
-        run: pip install -r requirements-pipeline.txt
+        run: pip install -r requirements-pipeline.txt dvc
 
-      - name: Install DVC
-        run: pip install dvc
+      - name: Validate workflow configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VLLM_BASE_URL" || { echo "Missing Actions variable VLLM_BASE_URL"; exit 1; }
+          test -n "$VLLM_HEALTH_URL" || { echo "Missing Actions variable VLLM_HEALTH_URL"; exit 1; }
+
+      - name: Wait for vLLM healthcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..30}; do
+            if curl --fail --silent "$VLLM_HEALTH_URL" >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "vLLM did not become healthy at $VLLM_HEALTH_URL" >&2
+          exit 1
 
       - name: Run model bias evaluation pipeline (DVC)
         run: dvc repro model_bias_eval model_bias_slices model_bias_fairlearn
+
+      - name: Run synthetic tool-calling benchmark
+        run: >-
+          python scripts/evaluate_tool_calling_bfcl.py
+          --base-url "$VLLM_BASE_URL"
+          --model "$VLLM_MODEL"
 
       - name: Upload bias reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: model-bias-reports
+          name: model-evaluation-reports
           path: |
             data/reports/model_bias_results.csv
             data/reports/model_bias_slicing_report.md
+            data/reports/tool_calling_group_outings_synthetic_25.json

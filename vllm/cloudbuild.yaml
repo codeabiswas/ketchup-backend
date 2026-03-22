@@ -22,9 +22,7 @@ availableSecrets:
 images: ["${_IMAGE}"]
 
 substitutions:
-  _IMAGE: "${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_NAME}:latest"
-  _REPO: "ketchup-vllm-dev"
-  _NAME: "qwen3-4b-2507-vllm"
+  _IMAGE: "us-central1-docker.pkg.dev/${PROJECT_ID}/ketchup-vllm-dev/qwen3-4b-2507-vllm:latest"
   _MODEL_REPO: "Qwen/Qwen3-4B-Instruct-2507"
   _MODEL_DIR: "Qwen3-4B-Instruct-2507"
 
