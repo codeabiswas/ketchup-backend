@@ -157,6 +157,37 @@ For a detached 25-example synthetic tool-calling benchmark against a running vLL
 
 This uses a local synthetic dataset in `data/benchmarks/synthetic_group_outings_tool_calling.json` with diverse group-outing requests, mock Google Maps-style tools, web-search cases, and no-tool abstain cases. Decision and tool-name checks are exact, but argument quality is scored semantically by an LLM judge using the served model. The script writes a JSON summary under `data/reports/` and can log per-example running metrics plus final results to Weights & Biases.
 
+## GitHub Actions Model Evaluation
+
+The repo includes a workflow at `.github/workflows/model-pipeline.yml` that runs:
+
+- the DVC model-bias stages
+- the synthetic tool-calling benchmark
+
+The intended deployment path for that workflow is:
+
+1. Deploy the standalone vLLM image to Cloud Run GPU
+2. Point GitHub Actions at the Cloud Run service root URL
+3. Run the workflow on GitHub-hosted runners
+
+Deploy vLLM to Cloud Run with the helper script:
+
+```bash
+GCLOUD_BIN="$HOME/google-cloud-sdk/bin/gcloud" \
+./scripts/deploy_vllm_cloud_run.sh YOUR_PROJECT_ID us-east1
+```
+
+Then set these repository variables in GitHub Actions:
+
+- `VLLM_BASE_URL=https://<cloud-run-service>`
+- `VLLM_MODEL=Qwen/Qwen3-4B-Instruct-2507`
+
+Important:
+
+- For this workflow, `VLLM_BASE_URL` should be the service root URL without `/v1`
+- `scripts/run_model_bias_synthetic_eval.py` and `scripts/evaluate_tool_calling_bfcl.py` append `/v1/...` internally
+- The workflow intentionally does not require a separate health-check variable
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
@@ -164,6 +195,9 @@ This uses a local synthetic dataset in `data/benchmarks/synthetic_group_outings_
 | `dvc` fails with `_DIR_MARK` import error | `pathspec` drift | run inside pipeline container (pinned deps) |
 | Airflow import errors (`flask_session` / `connexion`) | package drift in host venv | run Airflow via pipeline container |
 | Planner tool loop disabled by server | vLLM missing tool-call flags | add `--enable-auto-tool-choice --tool-call-parser ...` |
+| `The model \` Qwen/... \` does not exist` from vLLM | leading/trailing whitespace in `VLLM_MODEL` GitHub variable | re-save the GitHub Actions variable without extra spaces |
+| DVC fails to parse `VLLM_BASE_URL:-...` | shell-style default expansion placed directly in `dvc.yaml` | let the script read env vars itself instead of embedding shell defaults in the DVC command |
+| Workflow can reach Cloud Run manually but gets early `404`/timeouts in Actions | Cloud Run GPU cold start | rerun after warm-up or rely on the built-in request retries in the eval scripts |
 
 ## Related Docs
 
