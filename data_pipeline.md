@@ -70,18 +70,29 @@ Primary code paths:
 - Bias slicing and mitigation report generation in:
   - `scripts/detect_bias.py`
   - `pipelines/bias_detection.py`
+- Model-specific slicing scripts for Section 2.4 / 2.5 deliverables:
+  - `scripts/run_model_bias_synthetic_eval.py`
+  - `scripts/check_model_bias_slices.py`
+  - `scripts/check_model_bias_fairlearn.py`
+  - `pipelines/model_bias.md`
 - Slicing dimensions:
   - `availability_category` via `DataSlicer.slice_by_demographic`
   - optional multi-feature/grouped slicing via `slice_by_multiple_features` and `create_demographic_strata`
+  - model-eval slices such as `city_tier`, `budget_tier`, `distance_bucket`, and `car_ratio_bucket`
 - Metrics tracked per slice:
   - selection rate (statistical parity)
   - true positive rate (TPR)
   - false positive rate (FPR)
   - disparate impact ratio utility for group-to-group comparison
+  - model-eval metrics such as `budget_compliance`, `distance_compliance`, and `logistics_feasible`
 - Mitigation techniques implemented/documented:
   - recommendation generation in `generate_mitigation_report` (active in `scripts/detect_bias.py`)
   - `BiasMitigationStrategy.resample_underrepresented`
   - `BiasMitigationStrategy.stratified_sampling`
+  - model-side guardrails documented in `pipelines/model_bias.md`:
+    - budget prefiltering
+    - validate then repair
+    - low-coverage fallback mode
 - Trade-off documentation is captured in generated bias report outputs (`data/reports/bias_report.json`) and can be extended with model-level evaluation metrics.
 
 10. Flow optimization
@@ -96,6 +107,21 @@ Primary code paths:
 12. Error handling
 - Stage scripts use fail-fast behavior with explicit non-zero exits on failure.
 - DAG tasks preserve status and runtime profiles, including failed runs.
+
+## Planner Evaluation Addendum
+
+For the planner/model portion of the assignment, the repo now includes a domain-valid synthetic tool-calling benchmark instead of relying on a generic function-calling dataset.
+
+- Benchmark driver: `scripts/evaluate_tool_calling_bfcl.py`
+- Benchmark data: `data/benchmarks/synthetic_group_outings_tool_calling.json`
+- Output artifact: `data/reports/tool_calling_group_outings_synthetic_25.json`
+
+Why this was added:
+
+- Domain validity: benchmark prompts are synthetic but shaped like actual Ketchup outing-planning requests, including budgets, accessibility needs, dietary constraints, nightlife/event cases, and ambiguous cases where the model should abstain from calling a tool.
+- Tool-calling evaluation: benchmark cases explicitly test whether the model chooses the right planner tool (`search_places`, `get_directions`, `web_search`) and whether it correctly decides not to call a tool when critical grounding information is missing.
+- Experiment tracking: Weights & Biases logging is integrated into the benchmark runner so each example can be tracked with running metrics, final summary metrics, and per-example outputs for comparison across model/config versions.
+- Argument scoring realism: tool arguments are not graded with brittle strict-equality matching; instead, the served model acts as an LLM judge to score semantic argument quality while tool/no-tool and tool-name checks remain exact.
 
 ## Generated Outputs
 

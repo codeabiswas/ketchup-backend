@@ -1,0 +1,592 @@
+{
+  "name": "synthetic_group_outings_tool_calling_v1",
+  "format_version": "1.0",
+  "description": "Synthetic benchmark for Ketchup-style group outing planning tool use. It mixes venue search, directions lookup, timely web research, and abstain cases where the model should not call a tool yet.",
+  "benchmark_focus": [
+    "Diverse group planning requests instead of generic function calling",
+    "Correct decision on whether to call a tool at all",
+    "Correct tool family selection across maps, directions, and web search",
+    "Semantic quality of predicted arguments judged by the served model"
+  ],
+  "scoring_notes": [
+    "Decision and tool-name checks are exact",
+    "Argument quality is judged semantically with an LLM-as-a-judge score from 0.0 to 1.0",
+    "Abstain examples expect no tool call because critical grounding information is missing"
+  ],
+  "system_prompt": "You are validating tool use for Ketchup's outing planner. Decide whether to call exactly one tool before answering. Use `search_places` for venue discovery when the group gives a clear location and activity type. Use `get_directions` when the place and origin are already known and the user mainly needs travel time or distance. Use `web_search` for timely events, pop-ups, regulations, or other public-web questions. If critical grounding info is missing, do not call a tool yet.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "search_places",
+        "description": "Mock Google Maps place search for venues near a location.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Venue or activity query, for example 'private karaoke room'."
+            },
+            "location": {
+              "type": "string",
+              "description": "Area to search near, for example 'Boston, MA'."
+            },
+            "max_results": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 5
+            }
+          },
+          "required": ["query", "location"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_directions",
+        "description": "Mock Google Maps directions lookup between an origin and destination.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string",
+              "description": "Starting address or place."
+            },
+            "destination": {
+              "type": "string",
+              "description": "Destination address or place."
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["driving", "transit", "walking"],
+              "description": "Travel mode."
+            }
+          },
+          "required": ["origin", "destination"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "web_search",
+        "description": "Mock public web search for timely events, pop-ups, venue research, or local rules.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search query."
+            },
+            "location": {
+              "type": "string",
+              "description": "Optional location context."
+            },
+            "max_results": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 5
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "id": "outings_001",
+      "category": "students_budget_indoor",
+      "difficulty": "easy",
+      "group_profile": "Five graduate students in Boston want a cheap, rainy-night activity with no alcohol.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "There are five of us, all grad students in Boston. It is raining on Friday night, our budget is about $25 each, and we want something active but no alcohol. Can you help us pick a spot?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Boston, MA"
+        },
+        "argument_contains": {
+          "query": ["bowling", "arcade"]
+        }
+      }
+    },
+    {
+      "id": "outings_002",
+      "category": "parents_kids_accessibility",
+      "difficulty": "easy",
+      "group_profile": "Two parents with young kids want a calm stroller-friendly outing in Ballard.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are two parents with two kids under 8 and a stroller, and we will be in Ballard on Saturday afternoon. We want a quiet family outing indoors, ideally something playful but not chaotic. What should we do?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Ballard, Seattle, WA"
+        },
+        "argument_contains": {
+          "query": ["family", "indoor", "play"]
+        }
+      }
+    },
+    {
+      "id": "outings_003",
+      "category": "coworkers_timed_event",
+      "difficulty": "medium",
+      "group_profile": "Remote coworkers want a timely event in downtown Austin this weekend.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Our remote team is meeting up in downtown Austin this weekend. We want something more special than a normal bar, like a pop-up night market. Can you find a good outing idea?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "web_search",
+        "arguments": {
+          "location": "Austin, TX"
+        },
+        "argument_contains": {
+          "query": ["pop-up night market", "weekend", "Austin"]
+        }
+      }
+    },
+    {
+      "id": "outings_004",
+      "category": "retirees_live_music",
+      "difficulty": "easy",
+      "group_profile": "Retirees want an early jazz dinner with limited walking in Scottsdale.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "There are four of us, all retired, staying in Scottsdale. We want an early dinner with live jazz, and one person cannot walk very far. Can you look for something easy and comfortable?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Scottsdale, AZ"
+        },
+        "argument_contains": {
+          "query": ["live jazz", "restaurant"]
+        }
+      }
+    },
+    {
+      "id": "outings_005",
+      "category": "birthday_sober_karaoke",
+      "difficulty": "easy",
+      "group_profile": "A sober birthday group wants a private karaoke room in Williamsburg.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "It is my birthday and six of us are going out in Williamsburg on Friday night. We are keeping it sober, but we still want something loud and fun, ideally a private karaoke room."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Williamsburg, Brooklyn, NY"
+        },
+        "argument_contains": {
+          "query": ["private", "karaoke"]
+        }
+      }
+    },
+    {
+      "id": "outings_006",
+      "category": "queer_group_tonight_event",
+      "difficulty": "medium",
+      "group_profile": "A queer friend group wants a same-night Latin dance event in Little Havana.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Seven of us are in Miami tonight and want a fun queer-friendly outing in or near Little Havana. We would love a Latin dance social if there is one happening tonight."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "web_search",
+        "arguments": {
+          "location": "Miami, FL"
+        },
+        "argument_contains": {
+          "query": ["Latin dance", "tonight", "Little Havana"]
+        }
+      }
+    },
+    {
+      "id": "outings_007",
+      "category": "interns_mocktails_vegetarian",
+      "difficulty": "easy",
+      "group_profile": "Interns want a rooftop hang with vegetarian food and mocktails near Dupont Circle.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are four interns near Dupont Circle and want a rooftop place with mocktails and decent vegetarian snacks. Budget is under $40 each. Can you help us plan tonight?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Dupont Circle, Washington, DC"
+        },
+        "argument_contains": {
+          "query": ["rooftop", "mocktails", "vegetarian"]
+        }
+      }
+    },
+    {
+      "id": "outings_008",
+      "category": "gamers_late_night",
+      "difficulty": "easy",
+      "group_profile": "Gamers want a late-night LAN or esports spot in San Jose.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "There are five of us in San Jose and we want a late-night group outing that is not just dinner. We would love a LAN cafe or esports lounge that stays open fairly late."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "San Jose, CA"
+        },
+        "argument_contains": {
+          "query": ["LAN", "esports"]
+        }
+      }
+    },
+    {
+      "id": "outings_009",
+      "category": "tourists_weekend_event",
+      "difficulty": "medium",
+      "group_profile": "Chicago visitors want a public event in the West Loop this Saturday.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are visiting Chicago and staying near the West Loop. This Saturday we want something outdoors and memorable, like an open-air movie. Can you find an option for our group?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "web_search",
+        "arguments": {
+          "location": "Chicago, IL"
+        },
+        "argument_contains": {
+          "query": ["open-air movie", "Saturday", "West Loop"]
+        }
+      }
+    },
+    {
+      "id": "outings_010",
+      "category": "multigenerational_accessible",
+      "difficulty": "easy",
+      "group_profile": "A multigenerational family wants an accessible brunch near Midtown Atlanta.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are a multigenerational family meeting in Midtown Atlanta. One grandparent uses a wheelchair and we want a nice brunch before doing something cultural nearby. Can you help us start with the brunch part?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Midtown Atlanta, GA"
+        },
+        "argument_contains": {
+          "query": ["wheelchair accessible", "brunch"]
+        }
+      }
+    },
+    {
+      "id": "outings_011",
+      "category": "missing_location",
+      "difficulty": "hard",
+      "group_profile": "Friends spread across cities want an outing next month but give no location.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are eight friends spread across a few cities and want to do something fun together next month. Can you plan our outing?"
+        }
+      ],
+      "expected_tool_call": null
+    },
+    {
+      "id": "outings_012",
+      "category": "missing_location_music_food",
+      "difficulty": "hard",
+      "group_profile": "Friends want music and food on Saturday night but omit the city.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Can you find us a spot for Saturday night? We like good food and live music, and there will be six of us."
+        }
+      ],
+      "expected_tool_call": null
+    },
+    {
+      "id": "outings_013",
+      "category": "ambiguous_city",
+      "difficulty": "hard",
+      "group_profile": "A group may meet in Philly or DC depending on price, so the city is still undecided.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We might meet in Philly or DC depending on train prices, and we want a cool outing for five friends. Can you lock something in for us?"
+        }
+      ],
+      "expected_tool_call": null
+    },
+    {
+      "id": "outings_014",
+      "category": "athletes_recovery",
+      "difficulty": "easy",
+      "group_profile": "A climbing group wants a recovery-focused outing near RiNo in Denver.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "My climbing group will finish bouldering in RiNo and wants a relaxing outing after. We are thinking sauna or some kind of recovery spa nearby for four people."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "RiNo, Denver, CO"
+        },
+        "argument_contains": {
+          "query": ["sauna", "recovery"]
+        }
+      }
+    },
+    {
+      "id": "outings_015",
+      "category": "fashion_weekend_market",
+      "difficulty": "medium",
+      "group_profile": "Fashion-forward friends want a sample sale in Silver Lake this weekend.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Four of us will be in Silver Lake this weekend and want a fashion-focused outing. A sample sale would be ideal if anything good is happening."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "web_search",
+        "arguments": {
+          "location": "Los Angeles, CA"
+        },
+        "argument_contains": {
+          "query": ["sample sale", "weekend", "Silver Lake"]
+        }
+      }
+    },
+    {
+      "id": "outings_016",
+      "category": "book_club_dessert",
+      "difficulty": "easy",
+      "group_profile": "A book club wants a quiet dessert cafe open after 8 in Minneapolis.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Our book club is meeting in the North Loop tonight and wants somewhere calm for dessert after 8 PM. There are five of us and we want to be able to talk without shouting."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "North Loop, Minneapolis, MN"
+        },
+        "argument_contains": {
+          "query": ["dessert", "quiet"]
+        }
+      }
+    },
+    {
+      "id": "outings_017",
+      "category": "halal_family_games",
+      "difficulty": "easy",
+      "group_profile": "An extended family wants a halal-friendly outing with games near Sugar Land.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are an extended family group with teens, parents, and grandparents meeting near Sugar Land. We want a halal-friendly place where we can eat and still have some kind of arcade or game room."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Sugar Land, TX"
+        },
+        "argument_contains": {
+          "query": ["halal", "arcade"]
+        }
+      }
+    },
+    {
+      "id": "outings_018",
+      "category": "vegan_trivia_tonight",
+      "difficulty": "medium",
+      "group_profile": "Cyclists want a same-night trivia outing with NA options in SE Portland.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Six of us are vegan cyclists staying in Southeast Portland tonight. We want a low-key social outing, maybe brewery trivia, but we need strong nonalcoholic options too."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "web_search",
+        "arguments": {
+          "location": "Portland, OR"
+        },
+        "argument_contains": {
+          "query": ["trivia", "nonalcoholic", "SE Portland"]
+        }
+      }
+    },
+    {
+      "id": "outings_019",
+      "category": "baby_friendly_lunch",
+      "difficulty": "easy",
+      "group_profile": "Cousins with a baby want outdoor seating lunch near International Drive.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are visiting Orlando with a baby and want an easy lunch before doing aquarium stuff. We will be around International Drive and want outdoor seating if possible."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "International Drive, Orlando, FL"
+        },
+        "argument_contains": {
+          "query": ["outdoor seating", "lunch"]
+        }
+      }
+    },
+    {
+      "id": "outings_020",
+      "category": "walking_time_known_places",
+      "difficulty": "medium",
+      "group_profile": "Consultants already chose a venue and only need a walking-time check from Javits Center.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "There are five of us leaving a conference at Javits Center in Manhattan. We already picked Chelsea Market for dinner and just want to know if it is a reasonable walk for the group."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "get_directions",
+        "arguments": {
+          "origin": "Javits Center, New York, NY",
+          "destination": "Chelsea Market, New York, NY",
+          "mode": "walking"
+        }
+      }
+    },
+    {
+      "id": "outings_021",
+      "category": "night_shift_food",
+      "difficulty": "easy",
+      "group_profile": "Medical trainees want a 24-hour diner after midnight in Newark.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "A few of us from the hospital want food after midnight near University Hospital in Newark. We are exhausted and just need a dependable 24-hour diner where five people can sit down."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "Newark, NJ"
+        },
+        "argument_contains": {
+          "query": ["24 hour", "diner"]
+        }
+      }
+    },
+    {
+      "id": "outings_022",
+      "category": "beach_rules_tonight",
+      "difficulty": "medium",
+      "group_profile": "Surf friends need current bonfire rules and legal pit info for Mission Beach.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "We are trying to do a bonfire with friends tonight in Mission Beach. Before we commit, can you check the rules and whether there are legal fire pits we can use?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "web_search",
+        "arguments": {
+          "location": "San Diego, CA"
+        },
+        "argument_contains": {
+          "query": ["bonfire", "legal fire pits", "Mission Beach"]
+        }
+      }
+    },
+    {
+      "id": "outings_023",
+      "category": "new_moms_comfy_cafe",
+      "difficulty": "easy",
+      "group_profile": "New moms want a stroller-friendly tea or cafe meetup near North Hills.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Four of us are new moms meeting near North Hills in Raleigh with strollers. We want a tea house or cafe with comfy seating where we can stay a while and talk."
+        }
+      ],
+      "expected_tool_call": {
+        "name": "search_places",
+        "arguments": {
+          "location": "North Hills, Raleigh, NC"
+        },
+        "argument_contains": {
+          "query": ["tea", "couches", "stroller"]
+        }
+      }
+    },
+    {
+      "id": "outings_024",
+      "category": "transit_check_known_places",
+      "difficulty": "medium",
+      "group_profile": "Hackathon attendees already chose Ponce City Market and need a transit check from Georgia Tech.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Our hackathon group already decided on Ponce City Market after the event. Can you check how long it would take us to get there from Georgia Tech by transit before we commit?"
+        }
+      ],
+      "expected_tool_call": {
+        "name": "get_directions",
+        "arguments": {
+          "origin": "Georgia Tech, Atlanta, GA",
+          "destination": "Ponce City Market, Atlanta, GA",
+          "mode": "transit"
+        }
+      }
+    },
+    {
+      "id": "outings_025",
+      "category": "meta_clarification",
+      "difficulty": "hard",
+      "group_profile": "The user explicitly asks what details are needed before doing a real search.",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Before we search, what details do you need from our group to suggest real venues?"
+        }
+      ],
+      "expected_tool_call": null
+    }
+  ]
+}

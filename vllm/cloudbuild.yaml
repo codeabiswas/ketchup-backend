@@ -1,0 +1,31 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    id: build
+    entrypoint: "bash"
+    secretEnv: ["HF_TOKEN"]
+    args:
+      - -c
+      - |
+        docker buildx build \
+          --file=vllm/Dockerfile \
+          --tag="${_IMAGE}" \
+          --secret id=HF_TOKEN \
+          --build-arg VLLM_MODEL_REPO="${_MODEL_REPO}" \
+          --build-arg VLLM_MODEL_DIR="${_MODEL_DIR}" \
+          .
+
+availableSecrets:
+  secretManager:
+    - versionName: "projects/${PROJECT_ID}/secrets/HF_TOKEN/versions/latest"
+      env: "HF_TOKEN"
+
+images: ["${_IMAGE}"]
+
+substitutions:
+  _IMAGE: "us-central1-docker.pkg.dev/${PROJECT_ID}/ketchup-vllm-dev/qwen3-4b-2507-vllm:latest"
+  _MODEL_REPO: "Qwen/Qwen3-4B-Instruct-2507"
+  _MODEL_DIR: "Qwen3-4B-Instruct-2507"
+
+options:
+  dynamicSubstitutions: true
+  machineType: "E2_HIGHCPU_32"

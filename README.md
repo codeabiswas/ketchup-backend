@@ -1,6 +1,9 @@
 # Ketchup Backend
 
-FastAPI backend plus data pipeline for planning, voting, and analytics feature materialization. For a deeper dive on the methodology this takes for the data pipeline, please refer to `data_pipeline.md`.
+FastAPI backend plus data pipeline for planning, voting, and analytics feature materialization. 
+
+- For a deeper dive on the methodology this takes for the data pipeline, please refer to `data_pipeline.md`.
+- For a deeper dive on the methodology this takes for the model pipeline, please refer to `model-pipeline.md`.
 
 ## What This Repo Owns
 
@@ -29,6 +32,12 @@ cp .env.example .env
 docker compose up --build db api
 ```
 
+To run the repo with the local standalone vLLM server added in this branch:
+
+```bash
+docker compose --profile llm up --build db vllm api
+```
+
 3) Start pipeline worker (separate terminal):
 
 ```bash
@@ -36,7 +45,7 @@ docker compose up --build db api
 docker compose --profile pipeline up --build -d db pipeline
 ```
 
-4) Run pipeline actions through the pipeline container:
+4) Run data pipeline actions through the pipeline container:
 
 ```bash
 # Re-run all DVC stages end-to-end (forces recomputation)
@@ -80,6 +89,10 @@ Notes:
 - Both images install dependencies with `uv`.
 - Backend Compose DB is internal-only (no host port binding) to avoid clashes with `ketchup-local`.
 
+---
+
+# Model Development Pipeline Overview
+
 ## Environment Variables
 
 Core:
@@ -102,6 +115,17 @@ Planner behavior:
 - `PLANNER_NOVELTY_TARGET_REFINE`
 - `PLANNER_FALLBACK_ENABLED`
 
+Standalone vLLM service:
+
+- `HF_TOKEN`
+- `VLLM_MODEL_REPO`
+- `VLLM_MODEL_DIR`
+- `VLLM_MODEL_PATH`
+- `VLLM_GPU_MEMORY_UTILIZATION`
+- `VLLM_MAX_MODEL_LEN`
+- `VLLM_MAX_NUM_SEQS`
+- `VLLM_TOOL_CALL_PARSER`
+
 Tooling:
 
 - `GOOGLE_MAPS_API_KEY` for Maps tools
@@ -119,6 +143,58 @@ For vLLM auto tool-calling, run vLLM with:
 - `--enable-auto-tool-choice`
 - `--tool-call-parser <model-compatible-parser>`
 
+This branch adds a dedicated standalone vLLM server surface in `vllm/` for that purpose. The backend still remains the planner orchestrator; the vLLM service is only the raw model endpoint.
+
+## Model Bias Scripts
+
+For Section 2.4 and Section 2.5 work, use:
+
+- `python scripts/run_model_bias_synthetic_eval.py`
+- `python scripts/check_model_bias_slices.py`
+- `python scripts/check_model_bias_fairlearn.py`
+
+These write generated outputs under `data/reports/` and document slice-based bias checks for the planning model.
+
+## Tool-Calling Benchmark
+
+For a detached 25-example synthetic tool-calling benchmark against a running vLLM endpoint, use:
+
+- `python scripts/evaluate_tool_calling_bfcl.py --model <served-model-name>`
+- `python scripts/evaluate_tool_calling_bfcl.py --model <served-model-name> --wandb-project <project>`
+
+This uses a local synthetic dataset in `data/benchmarks/synthetic_group_outings_tool_calling.json` with diverse group-outing requests, mock Google Maps-style tools, web-search cases, and no-tool abstain cases. Decision and tool-name checks are exact, but argument quality is scored semantically by an LLM judge using the served model. The script writes a JSON summary under `data/reports/` and can log per-example running metrics plus final results to Weights & Biases.
+
+## GitHub Actions Model Evaluation
+
+The repo includes a workflow at `.github/workflows/model-pipeline.yml` that runs:
+
+- the DVC model-bias stages
+- the synthetic tool-calling benchmark
+
+The intended deployment path for that workflow is:
+
+1. Deploy the standalone vLLM image to Cloud Run GPU
+2. Point GitHub Actions at the Cloud Run service root URL
+3. Run the workflow on GitHub-hosted runners
+
+Deploy vLLM to Cloud Run with the helper script:
+
+```bash
+GCLOUD_BIN="$HOME/google-cloud-sdk/bin/gcloud" \
+./scripts/deploy_vllm_cloud_run.sh YOUR_PROJECT_ID us-east1
+```
+
+Then set these repository variables in GitHub Actions:
+
+- `VLLM_BASE_URL=https://<cloud-run-service>`
+- `VLLM_MODEL=Qwen/Qwen3-4B-Instruct-2507`
+
+Important:
+
+- For this workflow, `VLLM_BASE_URL` should be the service root URL without `/v1`
+- `scripts/run_model_bias_synthetic_eval.py` and `scripts/evaluate_tool_calling_bfcl.py` append `/v1/...` internally
+- The workflow intentionally does not require a separate health-check variable
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
@@ -126,9 +202,15 @@ For vLLM auto tool-calling, run vLLM with:
 | `dvc` fails with `_DIR_MARK` import error | `pathspec` drift | run inside pipeline container (pinned deps) |
 | Airflow import errors (`flask_session` / `connexion`) | package drift in host venv | run Airflow via pipeline container |
 | Planner tool loop disabled by server | vLLM missing tool-call flags | add `--enable-auto-tool-choice --tool-call-parser ...` |
+| `The model \` Qwen/... \` does not exist` from vLLM | leading/trailing whitespace in `VLLM_MODEL` GitHub variable | re-save the GitHub Actions variable without extra spaces |
+| DVC fails to parse `VLLM_BASE_URL:-...` | shell-style default expansion placed directly in `dvc.yaml` | let the script read env vars itself instead of embedding shell defaults in the DVC command |
+| Workflow can reach Cloud Run manually but gets early `404`/timeouts in Actions | Cloud Run GPU cold start | rerun after warm-up or rely on the built-in request retries in the eval scripts |
 
 ## Related Docs
 
+- `model-pipeline.md`
 - `data_pipeline.md`
 - `gcp.md`
 - `agents/README.md`
+- `vllm/README.md`
+- `pipelines/model_bias.md`

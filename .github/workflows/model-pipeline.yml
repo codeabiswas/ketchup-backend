@@ -1,0 +1,63 @@
+name: Model Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/run_model_bias_synthetic_eval.py"
+      - "scripts/check_model_bias_slices.py"
+      - "scripts/check_model_bias_fairlearn.py"
+      - "scripts/evaluate_tool_calling_bfcl.py"
+      - "pipelines/bias_detection.py"
+      - "data/benchmarks/**"
+      - "dvc.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: model-pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  model-bias-evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VLLM_BASE_URL: ${{ vars.VLLM_BASE_URL || '' }}
+      VLLM_MODEL: ${{ vars.VLLM_MODEL || 'Qwen/Qwen3-4B-Instruct-2507' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pipeline dependencies
+        run: pip install -r requirements-pipeline.txt dvc
+
+      - name: Validate workflow configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VLLM_BASE_URL" || { echo "Missing Actions variable VLLM_BASE_URL"; exit 1; }
+
+      - name: Run model bias evaluation pipeline (DVC)
+        run: dvc repro model_bias_eval model_bias_slices model_bias_fairlearn
+
+      - name: Run synthetic tool-calling benchmark
+        run: >-
+          python scripts/evaluate_tool_calling_bfcl.py
+          --base-url "$VLLM_BASE_URL"
+          --model "$VLLM_MODEL"
+
+      - name: Upload bias reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-evaluation-reports
+          path: |
+            data/reports/model_bias_results.csv
+            data/reports/model_bias_slicing_report.md
+            data/reports/tool_calling_group_outings_synthetic_25.json
