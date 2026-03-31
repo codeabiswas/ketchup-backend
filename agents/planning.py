@@ -602,20 +602,21 @@ def _format_member(member: dict[str, Any]) -> str:
         _, scan = sanitise_input(field_val, field_name=field_name)
         if scan.signals:
             logger.warning("Prompt-injection signal in member field: %s", scan.signals)
-    return (
+    typical = member.get("typical_locations") or []
+    typical_s = "; ".join(typical) if typical else ""
+    base = (
         f"- {member.get('name') or member.get('email')}: "
-        f"location={member.get('default_location') or 'unknown'}, "
         f"budget={member.get('budget_preference') or 'unspecified'}, "
         f"likes={likes_s}, dislikes={dislikes_s}"
     )
+    if typical_s:
+        base += f", typical_places=[{typical_s}]"
+    return base
 
 
 def _base_location_from_context(context: dict[str, Any]) -> str:
-    for member in context["members"]:
-        location = member.get("default_location")
-        if location:
-            return str(location)
-    return "Boston, MA"
+    """The app is scoped to Boston / Greater Boston."""
+    return "Boston and Greater Boston, MA"
 
 
 def _build_fallback_plans(
@@ -924,6 +925,50 @@ def _extract_web_results_from_tool_messages(
     return results
 
 
+_WEB_TITLE_SITE_SUFFIX_RE = re.compile(
+    r"\s*[-–—|]\s*("
+    r"Yelp|Eventbrite|Quora|TripAdvisor|Atlas Obscura|Reddit|"
+    r"Facebook|Timeout|Time Out|Lonely Planet|Foursquare|"
+    r"Google|Wikipedia|YouTube|Medium|Tripadvisor"
+    r").*$",
+    re.IGNORECASE,
+)
+
+_WEB_TITLE_LISTICLE_RE = re.compile(
+    r"^(THE\s+)?\d+\s+(BEST|Cool|Amazing|Awesome|Top|Great|Fun|Unusual|Must|Essential|Ultimate)",
+    re.IGNORECASE,
+)
+
+
+def _clean_web_title(raw_title: str) -> str | None:
+    """Clean a web search result title into a usable plan title.
+
+    Returns None if the title is a listicle/article heading that cannot
+    be meaningfully cleaned (those results should be skipped).
+    """
+    cleaned = _WEB_TITLE_SITE_SUFFIX_RE.sub("", raw_title).strip()
+    if not cleaned:
+        return None
+    if _WEB_TITLE_LISTICLE_RE.match(cleaned):
+        return None
+    # Skip titles that look like generic article headlines
+    lower = cleaned.lower()
+    if any(
+        phrase in lower
+        for phrase in [
+            "things to do",
+            "what to do",
+            "hidden gems",
+            "local's guide",
+            "locals guide",
+            "complete guide",
+            "travel guide",
+        ]
+    ):
+        return None
+    return cleaned[:120]
+
+
 def _build_web_grounded_fallback_plans(
     context: dict[str, Any],
     web_results: list[dict[str, Any]],
@@ -950,7 +995,7 @@ def _build_web_grounded_fallback_plans(
         prior_venues=prior_venues,
         novelty_target=novelty_target,
         label_getter=lambda result: str(result.get("title") or ""),
-        max_items=5,
+        max_items=10,  # Fetch extra so we can skip unusable titles
         priority_score_getter=lambda result: _venue_prior_score(
             str(result.get("title") or ""),
             prior_scores,
@@ -959,19 +1004,25 @@ def _build_web_grounded_fallback_plans(
 
     plans: list[dict[str, Any]] = []
     for idx, result in enumerate(selected_results):
-        title = result.get("title") or f"Web Option {idx + 1}"
+        if len(plans) >= 5:
+            break
+        raw_title = result.get("title") or ""
+        cleaned_title = _clean_web_title(raw_title)
+        if cleaned_title is None:
+            # Skip listicle / article titles — will be padded by generic fallback
+            continue
         snippet = result.get("snippet") or "Candidate discovered from web search."
         source = result.get("source") or result.get("link") or "web"
-        title_token = _normalize_venue_token(title)
-        prior_score = _venue_prior_score(str(title), prior_scores)
+        title_token = _normalize_venue_token(cleaned_title)
+        prior_score = _venue_prior_score(cleaned_title, prior_scores)
         plans.append(
             {
-                "title": str(title)[:120],
+                "title": cleaned_title,
                 "description": f"{str(snippet)[:260]}",
-                "vibe_type": DEFAULT_VIBES[idx],
-                "date_time": datetime.utcnow() + timedelta(days=7 + idx),
+                "vibe_type": DEFAULT_VIBES[len(plans)],
+                "date_time": datetime.utcnow() + timedelta(days=7 + len(plans)),
                 "location": base_location,
-                "venue_name": str(title)[:120],
+                "venue_name": cleaned_title,
                 "estimated_cost": "$20-40 per person",
                 "logistics": {
                     "source": "web_fallback",
@@ -1000,6 +1051,9 @@ def _build_web_grounded_fallback_plans(
             if len(plans) >= 5:
                 break
             plans.append(plan)
+
+    if not plans:
+        return None
 
     return plans[:5]
 
@@ -1036,7 +1090,7 @@ def _build_web_fallback_queries(
         activity_seeds.append("activities matching group voting feedback")
 
     descriptor_seeds = {
-        "budget_friendly": "affordable activities",
+        "budget_friendly": "free activities parks cheap eats",
         "short_travel": "activities close to downtown",
         "more_active": "active group activities",
         "more_chill": "quiet hangout spots",
@@ -1085,7 +1139,7 @@ def _build_maps_fallback_queries(
         activity_seeds.append("activities matching group voting feedback")
 
     descriptor_seeds = {
-        "budget_friendly": "cheap eats",
+        "budget_friendly": "free things to do",
         "short_travel": "near city center",
         "more_active": "sports activity",
         "more_chill": "cafe",
@@ -1238,9 +1292,38 @@ async def _load_group_context(group_id: UUID) -> dict[str, Any]:
         group_id,
     )
 
+    # Enrich members with typical locations from their availability blocks
+    # so the AI can suggest venues near where members usually are.
+    day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    member_dicts = []
+    for m in members:
+        md = dict(m)
+        avail_blocks = await db.fetch(
+            """
+            SELECT day_of_week, start_time, end_time, label, location
+            FROM availability_blocks
+            WHERE user_id = $1 AND location IS NOT NULL AND location != ''
+            ORDER BY day_of_week, start_time
+            """,
+            m["id"],
+        )
+        if avail_blocks:
+            places = []
+            for ab in avail_blocks:
+                day_str = day_names[ab["day_of_week"]] if 0 <= ab["day_of_week"] <= 6 else "?"
+                start = str(ab["start_time"])[:5] if ab["start_time"] else ""
+                end = str(ab["end_time"])[:5] if ab["end_time"] else ""
+                label = ab["label"] or ""
+                loc = ab["location"]
+                places.append(
+                    f"{day_str} {start}-{end}: {loc}" + (f" ({label})" if label else "")
+                )
+            md["typical_locations"] = places
+        member_dicts.append(md)
+
     return {
         "group": dict(group),
-        "members": [dict(m) for m in members],
+        "members": member_dicts,
         "recent_events": [dict(e) for e in recent_events],
     }
 
@@ -1287,6 +1370,12 @@ def _build_prompt(
             + "\n".join(f"- {descriptor}" for descriptor in descriptors)
             + "\n"
         )
+        if "budget_friendly" in descriptors:
+            descriptor_block += (
+                "\nHARD CONSTRAINT: Every plan's estimated_cost MUST be under $15/person. "
+                "If the group budget preference is set, go even lower. "
+                "Prioritize free activities, parks, and cheap eats.\n"
+            )
 
     lead_focus_block = ""
     if refinement_focus_note:
@@ -1336,6 +1425,7 @@ def _build_prompt(
 
     return f"""
 Group name: {context['group']['name']}
+Location context: All activities MUST be in Boston and Greater Boston, MA area.
 
 Members:
 {member_lines}
