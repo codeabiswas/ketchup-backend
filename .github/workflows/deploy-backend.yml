@@ -1,0 +1,146 @@
+name: Deploy Backend to GCP
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "data/**"
+      - "scripts/run_model_bias_*.py"
+      - "scripts/check_model_bias_*.py"
+      - "scripts/evaluate_tool_calling_*.py"
+      - "pipelines/bias_detection.py"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, staging, prod]
+
+concurrency:
+  group: deploy-backend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+  ENVIRONMENT: ${{ inputs.environment || vars.ENVIRONMENT || 'dev' }}
+
+jobs:
+  build-and-deploy:
+    name: Build, Push & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Authenticate to GCP via Workload Identity Federation ───────────
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── 3. Build & push Docker image ──────────────────────────────────────
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
+        id: build
+        run: |
+          REGISTRY="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/ketchup-backend-${{ env.ENVIRONMENT }}"
+          IMAGE_SHA="$REGISTRY/ketchup-backend:${{ github.sha }}"
+          IMAGE_LATEST="$REGISTRY/ketchup-backend:latest"
+
+          docker build -t "$IMAGE_SHA" -t "$IMAGE_LATEST" .
+          docker push "$IMAGE_SHA"
+          docker push "$IMAGE_LATEST"
+
+          echo "image=$IMAGE_SHA" >> $GITHUB_OUTPUT
+
+      # ── 4. Terraform ──────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.7"
+
+      - name: Generate terraform.tfvars
+        working-directory: terraform
+        run: |
+          cat > terraform.tfvars <<EOF
+          project_id   = "${{ env.PROJECT_ID }}"
+          region       = "${{ env.REGION }}"
+          environment  = "${{ env.ENVIRONMENT }}"
+          backend_image = "${{ steps.build.outputs.image }}"
+          frontend_url  = "${{ vars.FRONTEND_URL || 'http://localhost:3001' }}"
+          vllm_base_url = "${{ vars.VLLM_BASE_URL || '' }}"
+          vllm_model    = "${{ vars.VLLM_MODEL || 'Qwen/Qwen3-4B-Instruct-2507' }}"
+          backend_min_instances = ${{ vars.BACKEND_MIN_INSTANCES || '0' }}
+          backend_max_instances = ${{ vars.BACKEND_MAX_INSTANCES || '3' }}
+          db_instance_tier      = "${{ vars.DB_INSTANCE_TIER || 'db-f1-micro' }}"
+          EOF
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.GCS_TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/state"
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      # ── 5. Populate GCP Secrets Manager ───────────────────────────────────
+      # Uses `|| true` so re-runs don't fail if a version already exists with same value.
+      # Secret Manager versions are immutable; duplicate values just add a new version.
+      - name: Populate secrets in Secret Manager
+        run: |
+          populate_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "Skipping $name (empty)"
+              return
+            fi
+            printf '%s' "$value" | gcloud secrets versions add "$name" \
+              --data-file=- \
+              --project="${{ env.PROJECT_ID }}" 2>&1 || true
+          }
+
+          populate_secret "GOOGLE_MAPS_API_KEY"    "${{ secrets.GOOGLE_MAPS_API_KEY }}"
+          populate_secret "TAVILY_API_KEY"          "${{ secrets.TAVILY_API_KEY }}"
+          populate_secret "VLLM_API_KEY"            "${{ secrets.VLLM_API_KEY }}"
+          populate_secret "BACKEND_INTERNAL_API_KEY" "${{ secrets.BACKEND_INTERNAL_API_KEY }}"
+          populate_secret "HF_TOKEN"                "${{ secrets.HF_TOKEN }}"
+
+      # ── 6. Print deployment summary ────────────────────────────────────────
+      - name: Deployment summary
+        working-directory: terraform
+        run: |
+          echo "### Deployment complete" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ steps.build.outputs.image }}" >> $GITHUB_STEP_SUMMARY
+          BACKEND_URL=$(terraform output -raw backend_url 2>/dev/null || echo "unavailable")
+          echo "**Backend URL:** $BACKEND_URL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Health check: \`curl $BACKEND_URL/health\`" >> $GITHUB_STEP_SUMMARY
