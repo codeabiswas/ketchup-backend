@@ -71,6 +71,18 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
+      - name: Ensure Artifact Registry repo exists
+        env:
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
+        run: |
+          gcloud artifacts repositories describe "ketchup-backend-${ENVIRONMENT}" \
+            --location=${{ env.REGION }} --project=${{ env.PROJECT_ID }} 2>/dev/null \
+          || gcloud artifacts repositories create "ketchup-backend-${ENVIRONMENT}" \
+            --repository-format=docker \
+            --location=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --description="Docker repository for Ketchup Backend (${ENVIRONMENT})"
+
       - name: Build and push Docker image
         id: build
         env:
