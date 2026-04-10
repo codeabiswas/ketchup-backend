@@ -5,12 +5,15 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 
-  # backend "gcs" {
-  #   bucket = "YOUR_PROJECT_ID-terraform-state"
-  #   prefix = "terraform/state"
-  # }
+  # State bucket is created in the bootstrap step (see deployment guide).
+  # Bucket name and prefix are injected via -backend-config in CI/CD.
+  backend "gcs" {}
 }
 
 provider "google" {
