@@ -2,7 +2,7 @@ name: Deploy Backend to GCP
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
     paths-ignore:
       - "**.md"
       - "data/**"
@@ -13,11 +13,10 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment to deploy to"
-        required: true
-        default: "dev"
+        description: "Override environment (leave blank to use branch default)"
+        required: false
         type: choice
-        options: [dev, staging, prod]
+        options: ["", dev, prod]
 
 concurrency:
   group: deploy-backend-${{ github.ref }}
@@ -26,7 +25,6 @@ concurrency:
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   REGION: ${{ vars.GCP_REGION }}
-  ENVIRONMENT: ${{ inputs.environment || vars.ENVIRONMENT || 'dev' }}
 
 jobs:
   build-and-deploy:
@@ -37,6 +35,22 @@ jobs:
       id-token: write  # Required for Workload Identity Federation
 
     steps:
+      # ── 0. Determine environment from branch ─────────────────────────────
+      - name: Set environment
+        id: env
+        run: |
+          if [ -n "${{ inputs.environment }}" ]; then
+            ENV="${{ inputs.environment }}"
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            ENV="prod"
+          elif [ "${{ github.ref_name }}" = "staging" ]; then
+            ENV="dev"
+          else
+            ENV="dev"
+          fi
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "Deploying to **$ENV** (branch: ${{ github.ref_name }})" >> $GITHUB_STEP_SUMMARY
+
       # ── 1. Checkout ───────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,8 +72,10 @@ jobs:
 
       - name: Build and push Docker image
         id: build
+        env:
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
         run: |
-          REGISTRY="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/ketchup-backend-${{ env.ENVIRONMENT }}"
+          REGISTRY="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/ketchup-backend-${ENVIRONMENT}"
           IMAGE_SHA="$REGISTRY/ketchup-backend:${{ github.sha }}"
           IMAGE_LATEST="$REGISTRY/ketchup-backend:latest"
 
@@ -77,11 +93,13 @@ jobs:
 
       - name: Generate terraform.tfvars
         working-directory: terraform
+        env:
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
         run: |
           cat > terraform.tfvars <<EOF
           project_id   = "${{ env.PROJECT_ID }}"
           region       = "${{ env.REGION }}"
-          environment  = "${{ env.ENVIRONMENT }}"
+          environment  = "${ENVIRONMENT}"
           backend_image = "${{ steps.build.outputs.image }}"
           frontend_url  = "${{ vars.FRONTEND_URL || 'http://localhost:3001' }}"
           vllm_base_url = "${{ vars.VLLM_BASE_URL || '' }}"
@@ -93,10 +111,12 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform
+        env:
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
         run: |
           terraform init \
             -backend-config="bucket=${{ vars.GCS_TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/state"
+            -backend-config="prefix=terraform/state/${ENVIRONMENT}"
 
       - name: Terraform Validate
         working-directory: terraform
@@ -111,8 +131,6 @@ jobs:
         run: terraform apply -auto-approve tfplan
 
       # ── 5. Populate GCP Secrets Manager ───────────────────────────────────
-      # Uses `|| true` so re-runs don't fail if a version already exists with same value.
-      # Secret Manager versions are immutable; duplicate values just add a new version.
       - name: Populate secrets in Secret Manager
         run: |
           populate_secret() {
@@ -133,12 +151,15 @@ jobs:
           populate_secret "BACKEND_INTERNAL_API_KEY" "${{ secrets.BACKEND_INTERNAL_API_KEY }}"
           populate_secret "HF_TOKEN"                "${{ secrets.HF_TOKEN }}"
 
-      # ── 6. Print deployment summary ────────────────────────────────────────
+      # ── 6. Deployment summary ──────────────────────────────────────────────
       - name: Deployment summary
         working-directory: terraform
+        env:
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
         run: |
           echo "### Deployment complete" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${ENVIRONMENT}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ steps.build.outputs.image }}" >> $GITHUB_STEP_SUMMARY
           BACKEND_URL=$(terraform output -raw backend_url 2>/dev/null || echo "unavailable")
           echo "**Backend URL:** $BACKEND_URL" >> $GITHUB_STEP_SUMMARY
