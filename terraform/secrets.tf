@@ -1,3 +1,9 @@
+# --- Import pre-existing secrets (temp) ---
+import {
+  to = google_secret_manager_secret.hf_token
+  id = "projects/vllm-qwen3/secrets/HF_TOKEN"
+}
+
 # --- Secret placeholders (shell secret versions populated outside Terraform) ---
 
 resource "google_secret_manager_secret" "database_url" {

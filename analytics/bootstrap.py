@@ -5,6 +5,7 @@ from __future__ import annotations
 from database import db
 
 ANALYTICS_DDL: tuple[str, ...] = (
+    'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
     "CREATE SCHEMA IF NOT EXISTS analytics",
     """
     CREATE TABLE IF NOT EXISTS analytics.pipeline_runs (
