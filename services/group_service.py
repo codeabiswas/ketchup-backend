@@ -114,16 +114,25 @@ async def get_group(group_id: UUID, user_id: UUID) -> dict[str, object]:
         """
         SELECT id, iteration, status, voting_deadline, created_at
         FROM plan_rounds
-        WHERE group_id = $1 AND status = 'voting_open'
+        WHERE group_id = $1 AND status IN ('voting_open', 'votes_complete')
         ORDER BY created_at DESC
         LIMIT 1
         """,
         group_id,
     )
 
+    # Fetch vote counts for active rounds (for Rec B: vote progress).
+    round_vote_counts: dict[str, int] = {}
+    for r in rounds:
+        vote_count = await db.fetchval(
+            "SELECT COUNT(*) FROM votes WHERE plan_round_id = $1", r["id"]
+        )
+        round_vote_counts[str(r["id"])] = vote_count or 0
+
     events = await db.fetch(
         """
-        SELECT e.id, e.event_date, p.title as plan_title
+        SELECT e.id, e.event_date, p.title as plan_title, p.location as plan_location,
+               (SELECT COUNT(*) FROM feedback f WHERE f.event_id = e.id) as feedback_count
         FROM events e
         JOIN plans p ON e.plan_id = p.id
         WHERE e.group_id = $1
@@ -144,13 +153,26 @@ async def get_group(group_id: UUID, user_id: UUID) -> dict[str, object]:
     )
     preferences = {}
     if prefs_row:
+        # JSONB columns may come back as Python lists (asyncpg) or as
+        # JSON strings in some edge cases.  Normalise to list[str].
+        likes_raw = prefs_row["activity_likes"]
+        dislikes_raw = prefs_row["activity_dislikes"]
+        if isinstance(likes_raw, str):
+            try:
+                likes_raw = json.loads(likes_raw)
+            except (json.JSONDecodeError, TypeError):
+                likes_raw = []
+        if isinstance(dislikes_raw, str):
+            try:
+                dislikes_raw = json.loads(dislikes_raw)
+            except (json.JSONDecodeError, TypeError):
+                dislikes_raw = []
+
         preferences = {
             "default_location": prefs_row["default_location"],
-            "activity_likes": prefs_row["activity_likes"]
-            if prefs_row["activity_likes"] is not None
-            else [],
-            "activity_dislikes": prefs_row["activity_dislikes"]
-            if prefs_row["activity_dislikes"] is not None
+            "activity_likes": likes_raw if isinstance(likes_raw, list) else [],
+            "activity_dislikes": dislikes_raw
+            if isinstance(dislikes_raw, list)
             else [],
             "meetup_frequency": prefs_row["meetup_frequency"],
             "budget_preference": prefs_row["budget_preference"],
@@ -200,6 +222,7 @@ async def get_group(group_id: UUID, user_id: UUID) -> dict[str, object]:
         ],
         "max_members": MAX_GROUP_MEMBERS,
         "slots_remaining": slots_remaining,
+        "total_members": active_member_count,
         "current_plans": [
             {
                 "round_id": str(r["id"]),
@@ -208,6 +231,7 @@ async def get_group(group_id: UUID, user_id: UUID) -> dict[str, object]:
                 "voting_deadline": r["voting_deadline"].isoformat()
                 if r["voting_deadline"]
                 else None,
+                "votes_in": round_vote_counts.get(str(r["id"]), 0),
             }
             for r in rounds
         ],
@@ -216,6 +240,8 @@ async def get_group(group_id: UUID, user_id: UUID) -> dict[str, object]:
                 "id": str(e["id"]),
                 "event_date": e["event_date"].isoformat(),
                 "plan_title": e["plan_title"],
+                "location": e["plan_location"],
+                "feedback_count": e["feedback_count"] or 0,
             }
             for e in events
         ],
