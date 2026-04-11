@@ -7,7 +7,8 @@ resource "google_project_service" "enabled_apis" {
     "artifactregistry.googleapis.com",  # Artifact Registry
     "storage.googleapis.com",           # Cloud Storage (optional DVC artifacts)
     "cloudbuild.googleapis.com",        # Cloud Build
-    "sqladmin.googleapis.com"           # Cloud SQL (Postgres)
+    "sqladmin.googleapis.com",          # Cloud SQL (Postgres)
+    "iam.googleapis.com"               # IAM (service accounts)
   ])
 
   project = var.project_id
