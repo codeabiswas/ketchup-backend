@@ -85,3 +85,29 @@ variable "analytics_job_schedule" {
   type        = string
   default     = "0 3 * * *"
 }
+
+# --- SMTP (invite emails) ---
+
+variable "smtp_host" {
+  description = "SMTP server hostname"
+  type        = string
+  default     = "smtp.gmail.com"
+}
+
+variable "smtp_port" {
+  description = "SMTP server port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_user" {
+  description = "SMTP login username (email address)"
+  type        = string
+  default     = ""
+}
+
+variable "smtp_from_email" {
+  description = "From address for outgoing emails (defaults to smtp_user)"
+  type        = string
+  default     = ""
+}

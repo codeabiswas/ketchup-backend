@@ -119,6 +119,10 @@ jobs:
           backend_min_instances = ${{ vars.BACKEND_MIN_INSTANCES || '0' }}
           backend_max_instances = ${{ vars.BACKEND_MAX_INSTANCES || '3' }}
           db_instance_tier      = "${{ vars.DB_INSTANCE_TIER || 'db-f1-micro' }}"
+          smtp_host       = "${{ vars.SMTP_HOST || 'smtp.gmail.com' }}"
+          smtp_port       = ${{ vars.SMTP_PORT || '587' }}
+          smtp_user       = "${{ vars.SMTP_USER || '' }}"
+          smtp_from_email = "${{ vars.SMTP_FROM_EMAIL || '' }}"
           EOF
 
       - name: Terraform Init
@@ -162,6 +166,7 @@ jobs:
           populate_secret "VLLM_API_KEY"            "${{ secrets.VLLM_API_KEY }}"
           populate_secret "BACKEND_INTERNAL_API_KEY" "${{ secrets.BACKEND_INTERNAL_API_KEY }}"
           populate_secret "HF_TOKEN"                "${{ secrets.HF_TOKEN }}"
+          populate_secret "SMTP_PASSWORD"            "${{ secrets.SMTP_PASSWORD }}"
 
       # ── 6. Deployment summary ──────────────────────────────────────────────
       - name: Deployment summary

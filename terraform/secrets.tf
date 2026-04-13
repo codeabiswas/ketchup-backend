@@ -60,6 +60,16 @@ resource "google_secret_manager_secret" "hf_token" {
   depends_on = [google_project_service.enabled_apis]
 }
 
+resource "google_secret_manager_secret" "smtp_password" {
+  secret_id = "SMTP_PASSWORD"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.enabled_apis]
+}
+
 # --- DATABASE_URL secret version (set automatically from the Cloud SQL instance) ---
 # Cloud Run connects via the Cloud SQL Auth Proxy Unix socket mounted at /cloudsql.
 
@@ -111,6 +121,15 @@ resource "google_secret_manager_secret_version" "backend_internal_api_key" {
 
 resource "google_secret_manager_secret_version" "hf_token" {
   secret      = google_secret_manager_secret.hf_token.id
+  secret_data = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
+}
+
+resource "google_secret_manager_secret_version" "smtp_password" {
+  secret      = google_secret_manager_secret.smtp_password.id
   secret_data = "PLACEHOLDER"
 
   lifecycle {
