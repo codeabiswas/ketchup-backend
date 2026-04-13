@@ -30,6 +30,33 @@ resource "google_cloud_run_v2_service" "backend" {
         value = "false"
       }
 
+      # --- SMTP ---
+      env {
+        name  = "SMTP_HOST"
+        value = var.smtp_host
+      }
+      env {
+        name  = "SMTP_PORT"
+        value = tostring(var.smtp_port)
+      }
+      env {
+        name  = "SMTP_USER"
+        value = var.smtp_user
+      }
+      env {
+        name = "SMTP_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.smtp_password.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name  = "SMTP_FROM_EMAIL"
+        value = var.smtp_from_email
+      }
+
       # --- Secret-backed environment variables ---
       env {
         name = "DATABASE_URL"
