@@ -10,7 +10,7 @@ from services.errors import NotFoundError
 
 async def get_current_user(user_id: UUID) -> dict[str, object]:
     user = await db.fetchrow(
-        "SELECT id, email, name FROM users WHERE id = $1",
+        "SELECT id, email, name, onboarding_completed FROM users WHERE id = $1",
         user_id,
     )
     if not user:
@@ -42,6 +42,7 @@ async def get_current_user(user_id: UUID) -> dict[str, object]:
         "user_id": str(user["id"]),
         "email": user["email"],
         "name": user["name"],
+        "onboarding_completed": user["onboarding_completed"],
         "google_calendar_connected": False,
         "groups": [
             {
