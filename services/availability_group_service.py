@@ -1,4 +1,8 @@
-"""Group availability domain service."""
+"""Group availability domain service.
+
+Returns common free slots as **weekday-based patterns** (e.g. "Monday 5 PM – 9 PM")
+clipped to sensible plannable hours (8 AM – 11 PM).
+"""
 
 from __future__ import annotations
 
@@ -8,122 +12,120 @@ from uuid import UUID
 from database import db
 from services.group_access import require_active_group_member
 
+# Only show free slots within these hours (Issue 10: filter overnight).
+PLANNABLE_START = time(8, 0)
+PLANNABLE_END = time(23, 0)
 
-def _expand_blocks_to_intervals(
-    blocks: list, time_min: datetime, time_max: datetime
-) -> list[tuple[datetime, datetime]]:
-    intervals = []
-    for block in blocks:
-        day_of_week = block["day_of_week"]
-        start_t = block["start_time"]
-        end_t = block["end_time"]
-
-        if isinstance(start_t, str):
-            hour, minute = map(int, start_t.split(":")[:2])
-            start_t = time(hour, minute)
-        if isinstance(end_t, str):
-            hour, minute = map(int, end_t.split(":")[:2])
-            end_t = time(hour, minute)
-
-        current = time_min.replace(hour=0, minute=0, second=0, microsecond=0)
-        target_weekday = (day_of_week + 6) % 7
-        while current <= time_max:
-            if current.weekday() == target_weekday:
-                start_dt = datetime.combine(current.date(), start_t)
-                end_dt = datetime.combine(current.date(), end_t)
-                if start_dt < time_max and end_dt > time_min:
-                    intervals.append((max(start_dt, time_min), min(end_dt, time_max)))
-            current += timedelta(days=1)
-    return intervals
+DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 
-def _merge_overlapping(
-    intervals: list[tuple[datetime, datetime]],
-) -> list[tuple[datetime, datetime]]:
-    if not intervals:
-        return []
-    sorted_intervals = sorted(intervals)
-    merged = [sorted_intervals[0]]
-    for start, end in sorted_intervals[1:]:
-        if start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return merged
+def _time_to_str(t: time) -> str:
+    """Format time as '5:00 PM'."""
+    hour = t.hour
+    minute = t.minute
+    ampm = "AM" if hour < 12 else "PM"
+    display_hour = hour % 12 or 12
+    if minute == 0:
+        return f"{display_hour}:00 {ampm}"
+    return f"{display_hour}:{minute:02d} {ampm}"
 
 
-def _split_slot_by_day(
-    slot_start: datetime, slot_end: datetime, slot_hours: float
+def _parse_time(raw: str | time) -> time:
+    if isinstance(raw, time):
+        return raw
+    parts = raw.split(":")[:2]
+    return time(int(parts[0]), int(parts[1]))
+
+
+def _compute_weekday_free_slots(
+    all_blocks: dict[str, list[dict]],
 ) -> list[dict]:
-    split_slots = []
-    current = slot_start
-    while current < slot_end:
-        day_end = current.replace(hour=23, minute=59, second=59, microsecond=999)
-        chunk_end = min(day_end, slot_end)
-        if (chunk_end - current).total_seconds() >= slot_hours * 3600:
-            split_slots.append(
-                {
-                    "start": current.isoformat(),
-                    "end": chunk_end.isoformat(),
-                }
-            )
-        current = datetime.combine(chunk_end.date() + timedelta(days=1), time(0, 0, 0))
-    return split_slots
+    """Compute common free slots per weekday across all users.
 
+    For each day of the week (0=Sun..6=Sat):
+    1. Collect each user's busy intervals on that day.
+    2. Find gaps where ALL users are free.
+    3. Clip to plannable hours and filter out short (<1h) slots.
 
-def _find_common_free(
-    all_busy: dict, time_min: datetime, time_max: datetime, slot_hours: float = 2
-) -> list[dict]:
-    if not all_busy:
-        return [{"start": time_min.isoformat(), "end": time_max.isoformat()}]
+    Returns list of {day_of_week, day_name, start_time, end_time}.
+    """
+    results: list[dict] = []
 
-    merged = {uid: _merge_overlapping(busy) for uid, busy in all_busy.items()}
+    for dow in range(7):
+        # Collect busy intervals for this day of week per user.
+        user_busy: dict[str, list[tuple[time, time]]] = {}
+        for uid, blocks in all_blocks.items():
+            intervals = []
+            for block in blocks:
+                if block["day_of_week"] == dow:
+                    s = _parse_time(block["start_time"])
+                    e = _parse_time(block["end_time"])
+                    if s < e:
+                        intervals.append((s, e))
+            user_busy[uid] = intervals
 
-    all_starts = []
-    all_ends = []
-    for busy_slots in merged.values():
-        for start, end in busy_slots:
-            all_starts.append(start)
-            all_ends.append(end)
+        if not user_busy:
+            continue
 
-    if not all_starts:
-        return [{"start": time_min.isoformat(), "end": time_max.isoformat()}]
+        # Merge all busy intervals across all users into one timeline.
+        all_intervals: list[tuple[time, time]] = []
+        for intervals in user_busy.values():
+            all_intervals.extend(intervals)
 
-    events = sorted([(start, 1) for start in all_starts] + [(end, -1) for end in all_ends])
-    count = 0
-    gap_start = None
-    free_slots = []
-    for moment, delta in events:
-        count += delta
-        if count == 0:
-            gap_start = moment
-        elif gap_start and count == 1:
-            if (moment - gap_start).total_seconds() >= slot_hours * 3600:
-                if (moment - gap_start).total_seconds() > 24 * 3600:
-                    free_slots.extend(_split_slot_by_day(gap_start, moment, slot_hours))
-                else:
-                    free_slots.append(
-                        {
-                            "start": gap_start.isoformat(),
-                            "end": moment.isoformat(),
-                        }
-                    )
-            gap_start = None
-    return free_slots[:15]
+        if not all_intervals:
+            # Everyone is free all day — return the plannable window.
+            results.append({
+                "day_of_week": dow,
+                "day_name": DAY_NAMES[dow],
+                "start_time": _time_to_str(PLANNABLE_START),
+                "end_time": _time_to_str(PLANNABLE_END),
+            })
+            continue
 
+        # Sweep-line on this weekday to find free gaps.
+        events: list[tuple[int, int]] = []  # (minutes_since_midnight, +1/-1)
+        for s, e in all_intervals:
+            events.append((s.hour * 60 + s.minute, 1))
+            events.append((e.hour * 60 + e.minute, -1))
+        events.sort(key=lambda x: (x[0], -x[1]))
 
-def _parse_window(
-    time_min: str | None,
-    time_max: str | None,
-) -> tuple[datetime, datetime]:
-    now = datetime.utcnow()
-    start = datetime.fromisoformat(time_min.replace("Z", "+00:00")) if time_min else now
-    end = (
-        datetime.fromisoformat(time_max.replace("Z", "+00:00"))
-        if time_max
-        else now + timedelta(days=7)
-    )
-    return start, end
+        # Find gaps where count == 0 (nobody busy).
+        plannable_start_min = PLANNABLE_START.hour * 60 + PLANNABLE_START.minute
+        plannable_end_min = PLANNABLE_END.hour * 60 + PLANNABLE_END.minute
+
+        count = 0
+        gap_start: int | None = plannable_start_min  # Start of day (plannable)
+        free_gaps: list[tuple[int, int]] = []
+
+        for moment, delta in events:
+            if gap_start is not None and count == 0 and moment > gap_start:
+                free_gaps.append((gap_start, moment))
+            count += delta
+            if count == 0:
+                gap_start = moment
+            else:
+                gap_start = None
+
+        # Close final gap to end of plannable day.
+        if gap_start is not None and count == 0 and plannable_end_min > gap_start:
+            free_gaps.append((gap_start, plannable_end_min))
+
+        # Clip to plannable hours and filter short slots.
+        for gap_s, gap_e in free_gaps:
+            clipped_s = max(gap_s, plannable_start_min)
+            clipped_e = min(gap_e, plannable_end_min)
+            duration_hours = (clipped_e - clipped_s) / 60
+            if duration_hours >= 1.0:
+                start_t = time(clipped_s // 60, clipped_s % 60)
+                end_t = time(clipped_e // 60, clipped_e % 60)
+                results.append({
+                    "day_of_week": dow,
+                    "day_name": DAY_NAMES[dow],
+                    "start_time": _time_to_str(start_t),
+                    "end_time": _time_to_str(end_t),
+                })
+
+    return results
 
 
 async def compute_group_availability(
@@ -134,14 +136,12 @@ async def compute_group_availability(
 ) -> dict[str, object]:
     await require_active_group_member(group_id, user_id)
 
-    start, end = _parse_window(time_min, time_max)
-
     members = await db.fetch(
         "SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active'",
         group_id,
     )
 
-    all_busy = {}
+    all_blocks: dict[str, list[dict]] = {}
     for member in members:
         blocks = await db.fetch(
             """
@@ -151,12 +151,11 @@ async def compute_group_availability(
             """,
             member["user_id"],
         )
-        intervals = _expand_blocks_to_intervals([dict(block) for block in blocks], start, end)
-        all_busy[str(member["user_id"])] = intervals
+        all_blocks[str(member["user_id"])] = [dict(block) for block in blocks]
 
-    common_free = _find_common_free(all_busy, start, end)
+    common_free = _compute_weekday_free_slots(all_blocks)
     return {
         "common_slots": common_free,
-        "per_user_busy": {uid: len(busy) for uid, busy in all_busy.items()},
+        "per_user_busy": {uid: len(blocks) for uid, blocks in all_blocks.items()},
     }
 
