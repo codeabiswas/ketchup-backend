@@ -16,6 +16,7 @@ from config import get_settings
 from database import db
 from services.errors import BadRequestError, NotFoundError, UpstreamServiceError
 from services.group_access import require_active_group_member, require_group_lead
+from utils.email import send_voting_open_email, send_event_finalized_email
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,14 @@ DEFAULT_EVENT_OFFSET_DAYS = 7
 RECENT_VENUE_LIMIT = 40
 
 REFINEMENT_DESCRIPTOR_GUIDANCE: dict[str, str] = {
-    "budget_friendly": "Prefer lower cost and better value options.",
+    "budget_friendly": (
+        "CRITICAL BUDGET CONSTRAINT: The group selected 'budget friendly'. "
+        "ALL 5 plans MUST have estimated cost under $15 per person. "
+        "Prioritize: free activities (parks, public spaces, free museum days, "
+        "community events), picnics, hiking, free outdoor concerts, "
+        "cheap eats under $10, BYOB gatherings, and other low/no-cost options. "
+        "Do NOT suggest restaurants with entrees over $12 or any paid attractions over $10."
+    ),
     "short_travel": "Minimize travel time and distance for most members.",
     "more_active": "Bias toward higher-energy, activity-heavy options.",
     "more_chill": "Bias toward calmer, conversation-friendly options.",
@@ -55,6 +63,90 @@ def _first_choice_counts(votes: list) -> dict[str, int]:
             first_choice = rankings[0]
             counts[first_choice] = counts.get(first_choice, 0) + 1
     return counts
+
+
+def _borda_scores(votes: list, num_plans: int = 5) -> dict[str, float]:
+    """Compute Borda count scores. Rank 1 gets num_plans points, rank 2 gets num_plans-1, etc."""
+    scores: dict[str, float] = {}
+    for vote in votes:
+        rankings = _parse_rankings(vote["rankings"])
+        for position, plan_id in enumerate(rankings):
+            points = max(0, num_plans - position)
+            scores[plan_id] = scores.get(plan_id, 0) + points
+    return scores
+
+
+def _top_n_sets(votes: list, n: int = 3) -> list[set[str]]:
+    """Return the top-N plan IDs for each vote as a list of sets."""
+    result = []
+    for vote in votes:
+        rankings = _parse_rankings(vote["rankings"])
+        result.append(set(rankings[:n]))
+    return result
+
+
+def _determine_consensus(
+    votes: list, total_members: int
+) -> tuple[bool, str | None, dict[str, int]]:
+    """Determine consensus using a multi-strategy approach.
+
+    Strategy 1: First-choice strict majority (>50%).
+    Strategy 2: Borda count — if top scorer leads by a scaled margin AND
+                all voters have that plan in their top 3.
+    Strategy 3: Borda tie-break for small groups (≤3 voters) — if the top
+                Borda scores are tied and both candidates are in every
+                voter's top 3, pick the one with more first-choice votes.
+
+    Returns (consensus, winning_plan_id, first_choice_counts).
+    """
+    first_choices = _first_choice_counts(votes)
+
+    if not first_choices or not total_members:
+        return False, None, first_choices
+
+    # Strategy 1: First-choice majority
+    max_votes = max(first_choices.values())
+    if max_votes >= (total_members / 2) + 1:
+        winner = max(first_choices, key=first_choices.get)  # type: ignore[arg-type]
+        return True, winner, first_choices
+
+    # Strategy 2: Borda count with top-3 overlap
+    if len(votes) >= 2:
+        borda = _borda_scores(votes)
+        if borda:
+            sorted_borda = sorted(borda.items(), key=lambda x: x[1], reverse=True)
+            best_id, best_score = sorted_borda[0]
+            second_score = sorted_borda[1][1] if len(sorted_borda) > 1 else 0
+
+            # Scale margin by voter count: 2 voters → 1, 3+ → 2
+            min_margin = max(1, len(votes) - 1)
+            if best_score - second_score >= min_margin:
+                # Check that every voter has this plan in their top 3
+                top3_sets = _top_n_sets(votes, n=3)
+                if all(best_id in voter_top3 for voter_top3 in top3_sets):
+                    return True, best_id, first_choices
+
+            # Strategy 3: Borda tie-break for small groups
+            if len(votes) <= 3 and len(sorted_borda) >= 2:
+                if best_score == second_score:
+                    top3_sets = _top_n_sets(votes, n=3)
+                    candidates = [
+                        cid for cid, sc in sorted_borda if sc == best_score
+                    ]
+                    viable = [
+                        c
+                        for c in candidates
+                        if all(c in t3 for t3 in top3_sets)
+                    ]
+                    if viable:
+                        # Tiebreak: most first-choice votes, then plan_id
+                        winner = max(
+                            viable,
+                            key=lambda c: (first_choices.get(c, 0), c),
+                        )
+                        return True, winner, first_choices
+
+    return False, None, first_choices
 
 
 def _clamp_novelty_target(value: float, default: float) -> float:
@@ -203,8 +295,18 @@ async def _insert_generated_plans(
 
 
 async def _create_generation_round(group_id: UUID) -> tuple[UUID, int, datetime]:
+    # Only count rounds created after the most recent finalized event so that
+    # each hangout cycle starts at Round 1.
     max_iter = await db.fetchval(
-        "SELECT COALESCE(MAX(iteration), 0) FROM plan_rounds WHERE group_id = $1",
+        """
+        SELECT COALESCE(MAX(pr.iteration), 0)
+        FROM plan_rounds pr
+        WHERE pr.group_id = $1
+          AND pr.created_at > COALESCE(
+            (SELECT MAX(e.created_at) FROM events e WHERE e.group_id = $1),
+            '1970-01-01'::timestamptz
+          )
+        """,
         group_id,
     )
     iteration = (max_iter or 0) + 1
@@ -271,12 +373,39 @@ async def generate_plans(group_id: UUID, user_id: UUID) -> dict[str, object]:
         )
         raise UpstreamServiceError("Plan generation failed") from exc
 
+    # Notify all group members that voting is open.
+    await _send_voting_notifications(group_id, round_id)
+
     return {
         "plan_round_id": str(round_id),
         "plans": plans_data,
         "status": "voting_open",
         "voting_deadline": voting_deadline.isoformat(),
     }
+
+
+async def _send_voting_notifications(group_id: UUID, round_id: UUID) -> None:
+    """Send voting-open emails to all active group members."""
+    try:
+        group = await db.fetchrow("SELECT name FROM groups WHERE id = $1", group_id)
+        group_name = group["name"] if group else "your group"
+        members = await db.fetch(
+            """
+            SELECT u.email FROM group_members gm
+            JOIN users u ON gm.user_id = u.id
+            WHERE gm.group_id = $1 AND gm.status = 'active'
+            """,
+            group_id,
+        )
+        for member in members:
+            send_voting_open_email(
+                to_email=member["email"],
+                group_name=group_name,
+                group_id=str(group_id),
+                round_id=str(round_id),
+            )
+    except Exception:
+        logger.exception("Failed to send voting notification emails for group %s", group_id)
 
 
 async def get_plans(group_id: UUID, round_id: UUID, user_id: UUID) -> dict[str, object]:
@@ -327,7 +456,7 @@ async def submit_vote(
     await require_active_group_member(group_id, user_id)
 
     round_row = await db.fetchrow(
-        "SELECT id FROM plan_rounds WHERE id = $1 AND group_id = $2 AND status = 'voting_open'",
+        "SELECT id FROM plan_rounds WHERE id = $1 AND group_id = $2 AND status IN ('voting_open', 'votes_complete')",
         round_id,
         group_id,
     )
@@ -356,6 +485,21 @@ async def submit_vote(
         notes,
     )
 
+    # Check if all active members have now voted; if so, close voting.
+    total_members = await db.fetchval(
+        "SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND status = 'active'",
+        group_id,
+    )
+    total_votes = await db.fetchval(
+        "SELECT COUNT(*) FROM votes WHERE plan_round_id = $1",
+        round_id,
+    )
+    if total_votes >= total_members:
+        await db.execute(
+            "UPDATE plan_rounds SET status = 'votes_complete' WHERE id = $1 AND status = 'voting_open'",
+            round_id,
+        )
+
     return {
         "vote_id": "ok",
         "rankings": serialized_rankings,
@@ -382,26 +526,30 @@ async def get_voting_results(
         "SELECT rankings FROM votes WHERE plan_round_id = $1",
         round_id,
     )
-    first_choices = _first_choice_counts(votes)
+    total_votes = len(votes)
 
     total_members = await db.fetchval(
         "SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND status = 'active'",
         group_id,
     )
 
-    consensus = False
-    winning_plan_id = None
-    if first_choices and total_members:
-        max_votes = max(first_choices.values())
-        if max_votes >= (total_members / 2) + 1:
-            winning_plan_id = max(first_choices, key=first_choices.get)
-            consensus = True
+    consensus, winning_plan_id, first_choices = _determine_consensus(votes, total_members)
+
+    # If consensus was found, persist the winning plan on the round.
+    if consensus and winning_plan_id:
+        await db.execute(
+            "UPDATE plan_rounds SET winning_plan_id = $1 WHERE id = $2 AND winning_plan_id IS NULL",
+            UUID(winning_plan_id),
+            round_id,
+        )
 
     return {
         "consensus": consensus,
         "winning_plan_id": winning_plan_id,
         "vote_summary": first_choices,
         "iteration_count": 1,
+        "votes_in": total_votes,
+        "total_members": total_members,
     }
 
 
@@ -521,7 +669,7 @@ async def finalize_plan(group_id: UUID, round_id: UUID, user_id: UUID) -> dict[s
         raise BadRequestError("Cannot finalize without a winning plan")
 
     plan = await db.fetchrow(
-        "SELECT id, title, date_time FROM plans WHERE id = $1",
+        "SELECT id, title, description, location, date_time FROM plans WHERE id = $1",
         winning_id,
     )
     if not plan:
@@ -550,8 +698,49 @@ async def finalize_plan(group_id: UUID, round_id: UUID, user_id: UUID) -> dict[s
         round_id,
     )
 
+    # Send event confirmation emails with .ics to all group members.
+    await _send_event_finalized_notifications(
+        group_id=group_id,
+        plan_title=plan["title"],
+        event_date=event_row["event_date"],
+        location=plan["location"],
+        description=plan["description"],
+    )
+
     return {
         "event_id": str(event_row["id"]),
         "plan_title": plan["title"],
         "event_date": event_row["event_date"].isoformat(),
     }
+
+
+async def _send_event_finalized_notifications(
+    group_id: UUID,
+    plan_title: str,
+    event_date: datetime,
+    location: str | None = None,
+    description: str | None = None,
+) -> None:
+    """Send event finalization emails with .ics to all active group members."""
+    try:
+        group = await db.fetchrow("SELECT name FROM groups WHERE id = $1", group_id)
+        group_name = group["name"] if group else "your group"
+        members = await db.fetch(
+            """
+            SELECT u.email FROM group_members gm
+            JOIN users u ON gm.user_id = u.id
+            WHERE gm.group_id = $1 AND gm.status = 'active'
+            """,
+            group_id,
+        )
+        for member in members:
+            send_event_finalized_email(
+                to_email=member["email"],
+                group_name=group_name,
+                plan_title=plan_title,
+                event_date=event_date,
+                location=location,
+                description=description,
+            )
+    except Exception:
+        logger.exception("Failed to send event finalized emails for group %s", group_id)
