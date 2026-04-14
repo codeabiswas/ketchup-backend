@@ -3,16 +3,21 @@
 import ast
 import json
 import logging
-from math import ceil
 import re
 from datetime import datetime, timedelta
+from math import ceil
 from typing import Any, Callable
 from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
 from openai import APIConnectionError, AsyncOpenAI
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 from config import get_settings
 from database import db
@@ -33,7 +38,10 @@ PLANNER_TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "origin": {"type": "string", "description": "Starting address or place."},
+                    "origin": {
+                        "type": "string",
+                        "description": "Starting address or place.",
+                    },
                     "destination": {
                         "type": "string",
                         "description": "Destination address or place.",
@@ -123,15 +131,13 @@ _SECURITY_SUFFIX = (
 SYSTEM_PROMPT_TOOL_GROUNDED = (
     "You are Ketchup's planning engine. Build exactly 5 plans for a friend group. "
     "Use tools to ground recommendations in real places and travel times. "
-    "Return strict JSON only with key 'plans'."
-    + _SECURITY_SUFFIX
+    "Return strict JSON only with key 'plans'." + _SECURITY_SUFFIX
 )
 
 SYSTEM_PROMPT_BEST_EFFORT = (
     "You are Ketchup's planning engine. Build exactly 5 plans for a friend group. "
     "Tooling may be unavailable; do not mention missing tools, integrations, or API keys. "
-    "Return strict JSON only with key 'plans'."
-    + _SECURITY_SUFFIX
+    "Return strict JSON only with key 'plans'." + _SECURITY_SUFFIX
 )
 
 DEFAULT_VIBES = ["anchor", "pivot", "reach", "chill", "wildcard"]
@@ -143,9 +149,7 @@ PLACES_FIELD_MASK = (
     "places.displayName,places.formattedAddress,places.rating,places.priceLevel"
 )
 ROUTES_COMPUTE_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
-ROUTES_FIELD_MASK = (
-    "routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration"
-)
+ROUTES_FIELD_MASK = "routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration"
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 
@@ -223,7 +227,9 @@ async def _call_vllm_chat(messages: list[dict[str, Any]], **kwargs):
 def _strip_code_fence(text: str) -> str:
     candidate = text.strip()
     # Some model outputs include reasoning traces; remove them before JSON parsing.
-    candidate = re.sub(r"<think>.*?</think>", "", candidate, flags=re.DOTALL | re.IGNORECASE).strip()
+    candidate = re.sub(
+        r"<think>.*?</think>", "", candidate, flags=re.DOTALL | re.IGNORECASE
+    ).strip()
     if candidate.startswith("```"):
         candidate = re.sub(r"^```[a-zA-Z0-9_\-]*", "", candidate).strip()
         if candidate.endswith("```"):
@@ -337,9 +343,7 @@ def _prior_venue_set(prior_venues: list[str] | None) -> set[str]:
     if not prior_venues:
         return set()
     return {
-        token
-        for token in (_normalize_venue_token(v) for v in prior_venues)
-        if token
+        token for token in (_normalize_venue_token(v) for v in prior_venues) if token
     }
 
 
@@ -383,7 +387,12 @@ def _build_prior_scores(venue_priors: list[dict[str, Any]] | None) -> dict[str, 
         if avg_rank_f is not None:
             rank_bonus = max(0.0, min(1.0, (6.0 - avg_rank_f) / 5.0))
 
-        raw = (0.45 * win_rate) + (0.25 * feedback) + (0.2 * attendance) + (0.1 * rank_bonus)
+        raw = (
+            (0.45 * win_rate)
+            + (0.25 * feedback)
+            + (0.2 * attendance)
+            + (0.1 * rank_bonus)
+        )
         scores[key] = max(scores.get(key, 0.0), round(raw, 4))
     return scores
 
@@ -419,7 +428,9 @@ def _build_analytics_block(
                 continue
             sample_size = int(prior.get("sample_size") or 0)
             win_rate = float(prior.get("win_rate") or 0.0)
-            top_venues.append(f"- {venue} (win_rate={win_rate:.2f}, samples={sample_size})")
+            top_venues.append(
+                f"- {venue} (win_rate={win_rate:.2f}, samples={sample_size})"
+            )
         if top_venues:
             lines.append("Venue priors from outcomes:\n" + "\n".join(top_venues))
 
@@ -435,7 +446,9 @@ def _normalize_analytics_snapshot(raw: Any) -> dict[str, Any] | None:
     snapshot: dict[str, Any] = {}
     top_tags = raw.get("top_activity_tags")
     if isinstance(top_tags, list):
-        snapshot["top_activity_tags"] = [str(tag).strip() for tag in top_tags if str(tag).strip()]
+        snapshot["top_activity_tags"] = [
+            str(tag).strip() for tag in top_tags if str(tag).strip()
+        ]
 
     for key in ("budget_mode", "mobility_mode", "feature_version", "snapshot_at"):
         value = raw.get(key)
@@ -495,7 +508,9 @@ def _select_with_novelty(
         ordered_items.sort(key=priority_score_getter, reverse=True)
 
     prior_set = _prior_venue_set(prior_venues)
-    required_novel = min(max_items, int(ceil(max_items * _clamp_novelty_target(novelty_target))))
+    required_novel = min(
+        max_items, int(ceil(max_items * _clamp_novelty_target(novelty_target)))
+    )
 
     novel: list[dict[str, Any]] = []
     repeated: list[dict[str, Any]] = []
@@ -633,11 +648,31 @@ def _build_fallback_plans(
     refinement_short = (refinement_notes or "")[:240]
 
     templates = [
-        ("Cozy Cafe Catch-up", "Relaxed hangout over coffee and conversation.", "$10-20 per person"),
-        ("Food Hall Sampler", "Try multiple cuisines together in one spot.", "$20-35 per person"),
-        ("Park Picnic Sunset", "Low-cost outdoor plan with time to talk.", "$5-15 per person"),
-        ("Bowling + Snacks", "Casual activity with light competition.", "$25-40 per person"),
-        ("Live Event Night", "Explore a slightly adventurous local event.", "$30-60 per person"),
+        (
+            "Cozy Cafe Catch-up",
+            "Relaxed hangout over coffee and conversation.",
+            "$10-20 per person",
+        ),
+        (
+            "Food Hall Sampler",
+            "Try multiple cuisines together in one spot.",
+            "$20-35 per person",
+        ),
+        (
+            "Park Picnic Sunset",
+            "Low-cost outdoor plan with time to talk.",
+            "$5-15 per person",
+        ),
+        (
+            "Bowling + Snacks",
+            "Casual activity with light competition.",
+            "$25-40 per person",
+        ),
+        (
+            "Live Event Night",
+            "Explore a slightly adventurous local event.",
+            "$30-60 per person",
+        ),
     ]
 
     plans: list[dict[str, Any]] = []
@@ -677,7 +712,7 @@ def _cost_from_price_level(price_level: Any) -> str:
     try:
         level = int(price_level)
     except (TypeError, ValueError):
-        return "$20-40 per person"
+        return "$20-40 per person (estimated)"
 
     if level <= 0:
         return "$0-10 per person"
@@ -732,7 +767,9 @@ def _format_distance(meters: Any) -> str | None:
     return f"{miles:.1f} mi"
 
 
-def _extract_places_from_tool_messages(tool_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _extract_places_from_tool_messages(
+    tool_messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     places: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
 
@@ -1172,7 +1209,9 @@ async def _run_deterministic_maps_fallback_search(
     errors: list[str] = []
 
     for query in queries:
-        payload = await _search_places(query=query, location=base_location, max_results=4)
+        payload = await _search_places(
+            query=query, location=base_location, max_results=4
+        )
         if payload.get("error"):
             details = str(payload.get("details") or payload["error"])
             errors.append(f"{payload['error']} ({details[:120]})")
@@ -1310,7 +1349,9 @@ async def _load_group_context(group_id: UUID) -> dict[str, Any]:
         if avail_blocks:
             places = []
             for ab in avail_blocks:
-                day_str = day_names[ab["day_of_week"]] if 0 <= ab["day_of_week"] <= 6 else "?"
+                day_str = (
+                    day_names[ab["day_of_week"]] if 0 <= ab["day_of_week"] <= 6 else "?"
+                )
                 start = str(ab["start_time"])[:5] if ab["start_time"] else ""
                 end = str(ab["end_time"])[:5] if ab["end_time"] else ""
                 label = ab["label"] or ""
@@ -1355,16 +1396,22 @@ def _build_prompt(
         # OWASP: scan user-provided voting feedback for injection signals.
         _, scan = sanitise_input(refinement_notes, field_name="refinement_notes")
         if scan.signals:
-            logger.warning("Prompt-injection signal in refinement_notes: %s", scan.signals)
+            logger.warning(
+                "Prompt-injection signal in refinement_notes: %s", scan.signals
+            )
         refinement_block = f"\nVoting feedback to consider:\n{refinement_notes}\n"
 
     descriptor_block = ""
-    descriptors = [str(d).strip() for d in (refinement_descriptors or []) if str(d).strip()]
+    descriptors = [
+        str(d).strip() for d in (refinement_descriptors or []) if str(d).strip()
+    ]
     if descriptors:
         for descriptor in descriptors:
             _, scan = sanitise_input(descriptor, field_name="refinement_descriptor")
             if scan.signals:
-                logger.warning("Prompt-injection signal in descriptor: %s", scan.signals)
+                logger.warning(
+                    "Prompt-injection signal in descriptor: %s", scan.signals
+                )
         descriptor_block = (
             "\nRefinement descriptors selected by lead:\n"
             + "\n".join(f"- {descriptor}" for descriptor in descriptors)
@@ -1379,7 +1426,9 @@ def _build_prompt(
 
     lead_focus_block = ""
     if refinement_focus_note:
-        _, scan = sanitise_input(str(refinement_focus_note), field_name="refinement_focus_note")
+        _, scan = sanitise_input(
+            str(refinement_focus_note), field_name="refinement_focus_note"
+        )
         if scan.signals:
             logger.warning("Prompt-injection signal in focus_note: %s", scan.signals)
         lead_focus_block = f"\nLead focus note:\n{str(refinement_focus_note).strip()}\n"
@@ -1461,7 +1510,9 @@ Return strict JSON with this schema:
 """.strip()
 
 
-async def _search_places(query: str, location: str, max_results: int = 3) -> dict[str, Any]:
+async def _search_places(
+    query: str, location: str, max_results: int = 3
+) -> dict[str, Any]:
     settings = get_settings()
     if not settings.google_maps_api_key:
         return {"error": "GOOGLE_MAPS_API_KEY not set"}
@@ -1522,9 +1573,7 @@ async def _search_places(query: str, location: str, max_results: int = 3) -> dic
         name = (
             display_name.get("text")
             if isinstance(display_name, dict)
-            else item.get("name")
-            if isinstance(item, dict)
-            else None
+            else item.get("name") if isinstance(item, dict) else None
         )
         address = item.get("formattedAddress") if isinstance(item, dict) else None
         places.append(
@@ -1532,7 +1581,9 @@ async def _search_places(query: str, location: str, max_results: int = 3) -> dic
                 "name": name,
                 "address": address,
                 "rating": item.get("rating") if isinstance(item, dict) else None,
-                "price_level": item.get("priceLevel") if isinstance(item, dict) else None,
+                "price_level": (
+                    item.get("priceLevel") if isinstance(item, dict) else None
+                ),
             }
         )
     return {"places": places}
@@ -1611,7 +1662,9 @@ async def _web_search(
             {
                 "title": str(item.get("title") or "").strip(),
                 "link": link,
-                "snippet": str(item.get("content") or item.get("snippet") or "").strip(),
+                "snippet": str(
+                    item.get("content") or item.get("snippet") or ""
+                ).strip(),
                 "source": source,
             }
         )
@@ -1895,7 +1948,9 @@ async def _run_tool_loop(
             {
                 "role": "assistant",
                 "content": message.content or "",
-                "tool_calls": [tc.model_dump(exclude_none=True) for tc in message.tool_calls],
+                "tool_calls": [
+                    tc.model_dump(exclude_none=True) for tc in message.tool_calls
+                ],
             }
         )
 
@@ -2009,9 +2064,14 @@ async def generate_group_plans(
     context = await _load_group_context(group_id)
     settings = get_settings()
     constraints = planning_constraints if isinstance(planning_constraints, dict) else {}
-    plan_mode = str(
-        constraints.get("plan_mode") or ("refine" if refinement_notes else "generate")
-    ).strip().lower()
+    plan_mode = (
+        str(
+            constraints.get("plan_mode")
+            or ("refine" if refinement_notes else "generate")
+        )
+        .strip()
+        .lower()
+    )
     novelty_target = _clamp_novelty_target(
         constraints.get("novelty_target"),
         default=0.35 if refinement_notes else 0.7,
@@ -2026,7 +2086,9 @@ async def generate_group_plans(
         for descriptor in (constraints.get("refinement_descriptors") or [])
         if str(descriptor).strip()
     ]
-    analytics_snapshot = _normalize_analytics_snapshot(constraints.get("analytics_snapshot"))
+    analytics_snapshot = _normalize_analytics_snapshot(
+        constraints.get("analytics_snapshot")
+    )
     venue_priors = _normalize_venue_priors(constraints.get("venue_priors"))
     if not refinement_descriptors and plan_mode == "refine" and analytics_snapshot:
         weights = analytics_snapshot.get("refine_descriptor_weights")
@@ -2041,9 +2103,7 @@ async def generate_group_plans(
                 reverse=True,
             )
             refinement_descriptors = [
-                key
-                for key, value in ranked_descriptors
-                if value >= 0.45
+                key for key, value in ranked_descriptors if value >= 0.45
             ][:3]
     refinement_focus_note = str(constraints.get("refinement_focus_note") or "").strip()
     use_tool_grounding = bool(settings.google_maps_api_key.strip())
@@ -2051,7 +2111,9 @@ async def generate_group_plans(
     tools = (
         PLANNER_TOOLS
         if use_web_search
-        else [tool for tool in PLANNER_TOOLS if tool["function"]["name"] != "web_search"]
+        else [
+            tool for tool in PLANNER_TOOLS if tool["function"]["name"] != "web_search"
+        ]
     )
     system_prompt = (
         SYSTEM_PROMPT_TOOL_GROUNDED if use_tool_grounding else SYSTEM_PROMPT_BEST_EFFORT
@@ -2094,16 +2156,18 @@ async def generate_group_plans(
                     tool_exc.__class__.__name__,
                     tool_exc,
                 )
-                synthesized, grounded_errors = await _synthesize_grounded_fallback_plans(
-                    context=context,
-                    tool_messages=tool_messages,
-                    reason=f"Tool loop failed: {tool_exc.__class__.__name__}: {tool_exc}",
-                    refinement_notes=refinement_notes,
-                    web_search_enabled=use_web_search,
-                    prior_venues=prior_venues,
-                    novelty_target=novelty_target,
-                    refinement_descriptors=refinement_descriptors,
-                    venue_priors=venue_priors,
+                synthesized, grounded_errors = (
+                    await _synthesize_grounded_fallback_plans(
+                        context=context,
+                        tool_messages=tool_messages,
+                        reason=f"Tool loop failed: {tool_exc.__class__.__name__}: {tool_exc}",
+                        refinement_notes=refinement_notes,
+                        web_search_enabled=use_web_search,
+                        prior_venues=prior_venues,
+                        novelty_target=novelty_target,
+                        refinement_descriptors=refinement_descriptors,
+                        venue_priors=venue_priors,
+                    )
                 )
                 if synthesized:
                     logger.warning(
@@ -2111,7 +2175,11 @@ async def generate_group_plans(
                         group_id,
                     )
                     return synthesized
-                details = " | ".join(grounded_errors[:2]) if grounded_errors else str(tool_exc)
+                details = (
+                    " | ".join(grounded_errors[:2])
+                    if grounded_errors
+                    else str(tool_exc)
+                )
                 raise PlannerError(
                     f"Tool-grounded planning failed before model output ({details})"
                 ) from tool_exc
@@ -2155,16 +2223,18 @@ async def generate_group_plans(
             parse_message = str(parse_exc)
             if use_tool_grounding and "no plans" in parse_message.lower():
                 tool_summary = _summarize_tool_results(tool_messages)
-                synthesized, grounded_errors = await _synthesize_grounded_fallback_plans(
-                    context=context,
-                    tool_messages=tool_messages,
-                    reason=f"LLM produced empty plans: {parse_message}",
-                    refinement_notes=refinement_notes,
-                    web_search_enabled=use_web_search,
-                    prior_venues=prior_venues,
-                    novelty_target=novelty_target,
-                    refinement_descriptors=refinement_descriptors,
-                    venue_priors=venue_priors,
+                synthesized, grounded_errors = (
+                    await _synthesize_grounded_fallback_plans(
+                        context=context,
+                        tool_messages=tool_messages,
+                        reason=f"LLM produced empty plans: {parse_message}",
+                        refinement_notes=refinement_notes,
+                        web_search_enabled=use_web_search,
+                        prior_venues=prior_venues,
+                        novelty_target=novelty_target,
+                        refinement_descriptors=refinement_descriptors,
+                        venue_priors=venue_priors,
+                    )
                 )
                 if synthesized:
                     logger.warning(
@@ -2177,7 +2247,10 @@ async def generate_group_plans(
                     details_parts.append("; ".join(tool_summary["errors"][:2]))
                 if grounded_errors:
                     details_parts.append("; ".join(grounded_errors[:2]))
-                details = " | ".join(details_parts) or "no usable grounded venues were returned"
+                details = (
+                    " | ".join(details_parts)
+                    or "no usable grounded venues were returned"
+                )
                 raise PlannerError(
                     f"LLM returned no plans and map search produced no usable venues ({details})"
                 ) from parse_exc
