@@ -1,0 +1,586 @@
+{
+  "title": "GCP \u2014 vLLM Cloud Run",
+  "uid": "gcp-vllm-cloudrun",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "pluginId": "stackdriver",
+        "label": "Cloud Monitoring datasource",
+        "hide": 0,
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate (req/s)",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/request_count",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "requests",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_RATE",
+            "metricKind": "DELTA",
+            "valueType": "INT64",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "5xx Error Rate",
+      "type": "stat",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/request_count",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm",
+              "AND",
+              "metric.label.response_code_class",
+              "=",
+              "5xx"
+            ],
+            "groupBys": [],
+            "aliasBy": "5xx errors",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_RATE",
+            "metricKind": "DELTA",
+            "valueType": "INT64",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Active Instances",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/container/instance_count",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "instances",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "metricKind": "GAUGE",
+            "valueType": "INT64",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "P99 Request Latency",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/request_latencies",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "p99",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "metricKind": "DELTA",
+            "valueType": "DISTRIBUTION",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10000
+              },
+              {
+                "color": "red",
+                "value": 30000
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Request Rate by Response Class",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/request_count",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [
+              "metric.label.response_code_class"
+            ],
+            "aliasBy": "{{metric.label.response_code_class}}",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_RATE",
+            "metricKind": "DELTA",
+            "valueType": "INT64",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Request Latency Percentiles",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/request_latencies",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "p50",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_PERCENTILE_50",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "metricKind": "DELTA",
+            "valueType": "DISTRIBUTION",
+            "editorMode": "visual"
+          }
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/request_latencies",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "p95",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "metricKind": "DELTA",
+            "valueType": "DISTRIBUTION",
+            "editorMode": "visual"
+          }
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/request_latencies",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "p99",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "metricKind": "DELTA",
+            "valueType": "DISTRIBUTION",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Container CPU Utilization",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/container/cpu/utilization",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "cpu",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_MEAN",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "metricKind": "GAUGE",
+            "valueType": "DOUBLE",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Container Memory Utilization",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/container/memory/utilization",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [],
+            "aliasBy": "memory",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_MEAN",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "metricKind": "GAUGE",
+            "valueType": "DOUBLE",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Instance Count (scaling)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "${datasource}"
+          },
+          "queryType": "metrics",
+          "metricQuery": {
+            "projectName": "qwen-tool-25",
+            "metricType": "run.googleapis.com/container/instance_count",
+            "filters": [
+              "resource.label.service_name",
+              "=",
+              "ketchup-vllm"
+            ],
+            "groupBys": [
+              "metric.label.state"
+            ],
+            "aliasBy": "{{metric.label.state}}",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "metricKind": "GAUGE",
+            "valueType": "INT64",
+            "editorMode": "visual"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    }
+  ]
+}
