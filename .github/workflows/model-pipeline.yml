@@ -61,3 +61,14 @@ jobs:
             data/reports/model_bias_results.csv
             data/reports/model_bias_slicing_report.md
             data/reports/tool_calling_group_outings_synthetic_25.json
+
+      - name: Notify failure via email
+        if: ${{ failure() && vars.ALERT_EMAIL_TO != '' }}
+        uses: ./.github/actions/notify-failure
+        with:
+          smtp_host: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+          smtp_port: ${{ vars.SMTP_PORT || '587' }}
+          smtp_user: ${{ vars.SMTP_USER }}
+          smtp_password: ${{ secrets.SMTP_PASSWORD }}
+          from_email: ${{ vars.SMTP_FROM_EMAIL }}
+          to: ${{ vars.ALERT_EMAIL_TO }}

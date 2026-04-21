@@ -152,5 +152,7 @@ def test_cost_from_price_level_parser():
     # Ensuring Google Maps price levels translate
     assert _cost_from_price_level("PRICE_LEVEL_MODERATE") == "$20-40 per person"
     assert _cost_from_price_level(2) == "$20-40 per person"
-    assert _cost_from_price_level("unparsable") == "$20-40 per person"  # default
+    assert (
+        _cost_from_price_level("unparsable") == "$20-40 per person (estimated)"
+    )  # fallback when unparsable
     assert _cost_from_price_level(-5) == "$0-10 per person"

@@ -1,0 +1,313 @@
+name: Deploy vLLM to GCP
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "vllm/**"
+      - "scripts/push_vllm_image.sh"
+      - "scripts/deploy_vllm_cloud_run.sh"
+      - ".github/workflows/deploy-vllm.yml"
+  workflow_dispatch:
+    inputs:
+      service_name:
+        description: "Cloud Run service name (overrides VLLM_SERVICE_NAME var)"
+        required: false
+        type: string
+      allow_public:
+        description: "Allow unauthenticated invocations"
+        required: false
+        default: true
+        type: boolean
+      skip_build:
+        description: "Skip Cloud Build — deploy the existing :latest image directly (default: true, fast path)"
+        required: false
+        default: true
+        type: boolean
+      image_tag:
+        description: "Image tag to deploy (used only when skip_build is true)"
+        required: false
+        default: "latest"
+        type: string
+      auto_deploy_backend:
+        description: "After vLLM deploys, update VLLM_BASE_URL variable and trigger backend deploy"
+        required: false
+        default: true
+        type: boolean
+      backend_ref:
+        description: "Branch to run the backend deploy on (main=prod, staging=dev)"
+        required: false
+        default: "main"
+        type: string
+
+concurrency:
+  group: deploy-vllm-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ vars.VLLM_GCP_PROJECT_ID }}
+  REGION: ${{ vars.VLLM_GCP_REGION }}
+  SERVICE: ${{ inputs.service_name || vars.VLLM_SERVICE_NAME || 'ketchup-vllm' }}
+  REPO: ${{ vars.VLLM_REPO_NAME || 'ketchup-vllm-dev' }}
+  IMAGE_NAME: ${{ vars.VLLM_IMAGE_NAME || 'qwen3-4b-2507-vllm' }}
+  # Normalize skip_build across event types:
+  # - push events default to 'true' (fast deploy-only path, reuses :latest)
+  # - workflow_dispatch uses the input (whose own default is also true)
+  # To force a rebuild, dispatch manually with skip_build unchecked.
+  SKIP_BUILD: ${{ github.event_name == 'push' && 'false' || inputs.skip_build }}
+
+jobs:
+  deploy:
+    name: Build & Deploy vLLM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required inputs
+        run: |
+          missing=0
+          for v in PROJECT_ID REGION; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Required variable $v is empty. Set VLLM_GCP_PROJECT_ID / VLLM_GCP_REGION in GitHub repo variables."
+              missing=1
+            fi
+          done
+          if [ -z "${{ secrets.VLLM_GCP_SA_KEY }}" ]; then
+            echo "::error::Secret VLLM_GCP_SA_KEY is empty. Upload the vLLM GCP service account key JSON."
+            missing=1
+          fi
+          if [ -z "${{ secrets.HF_TOKEN }}" ]; then
+            echo "::error::Secret HF_TOKEN is empty."
+            missing=1
+          fi
+          [ "$missing" -eq 0 ]
+
+      - name: Authenticate to Google Cloud (vLLM account)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.VLLM_GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      # ── Prerequisites the script doesn't handle ──────────────────────────
+      # (Script enables run/cloudbuild/artifactregistry, not secretmanager.)
+
+      - name: Enable Secret Manager API
+        run: |
+          gcloud services enable secretmanager.googleapis.com \
+            --project "${PROJECT_ID}"
+
+      - name: Provision HF_TOKEN in Secret Manager
+        if: ${{ env.SKIP_BUILD != 'true' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if gcloud secrets describe HF_TOKEN --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            printf '%s' "$HF_TOKEN" | gcloud secrets versions add HF_TOKEN \
+              --data-file=- --project="${PROJECT_ID}"
+          else
+            printf '%s' "$HF_TOKEN" | gcloud secrets create HF_TOKEN \
+              --data-file=- --project="${PROJECT_ID}" --replication-policy=automatic
+          fi
+
+      - name: Grant Cloud Build access to HF_TOKEN
+        if: ${{ env.SKIP_BUILD != 'true' }}
+        run: |
+          PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')
+          # Newer projects use the default Compute SA for Cloud Build; older
+          # projects use the dedicated cloudbuild SA. Bind both — whichever
+          # doesn't exist will no-op with `|| true`.
+          for SA in \
+            "${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+            "${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+          do
+            gcloud secrets add-iam-policy-binding HF_TOKEN \
+              --member="serviceAccount:${SA}" \
+              --role="roles/secretmanager.secretAccessor" \
+              --project="${PROJECT_ID}" >/dev/null 2>&1 || true
+          done
+
+      # ── Build + deploy path (default) ────────────────────────────────────
+
+      - name: Build & deploy via scripts/deploy_vllm_cloud_run.sh
+        if: ${{ env.SKIP_BUILD != 'true' }}
+        env:
+          # On push events, inputs.* is empty — default ALLOW_PUBLIC to true.
+          ALLOW_PUBLIC: ${{ github.event_name == 'push' && 'true' || inputs.allow_public }}
+          # Cloud Run sizing / behaviour (overrideable via repo vars).
+          GPU_TYPE: ${{ vars.VLLM_GPU_TYPE || 'nvidia-l4' }}
+          CPU: ${{ vars.VLLM_CPU || '8' }}
+          MEMORY: ${{ vars.VLLM_MEMORY || '32Gi' }}
+          MIN_INSTANCES: ${{ vars.VLLM_MIN_INSTANCES || '0' }}
+          MAX_INSTANCES: ${{ vars.VLLM_MAX_INSTANCES || '1' }}
+          # vLLM runtime tuning.
+          VLLM_MODEL: ${{ vars.VLLM_MODEL_REPO || 'Qwen/Qwen3-4B-Instruct-2507' }}
+          VLLM_MODEL_DIR: ${{ vars.VLLM_MODEL_DIR || 'Qwen3-4B-Instruct-2507' }}
+          VLLM_MAX_MODEL_LEN: ${{ vars.VLLM_MAX_MODEL_LEN || '4096' }}
+          VLLM_MAX_NUM_SEQS: ${{ vars.VLLM_MAX_NUM_SEQS || '4' }}
+          VLLM_GPU_MEMORY_UTILIZATION: ${{ vars.VLLM_GPU_MEMORY_UTILIZATION || '0.70' }}
+          VLLM_TOOL_CALL_PARSER: ${{ vars.VLLM_TOOL_CALL_PARSER || 'hermes' }}
+          # push_vllm_image.sh reads this to resolve the HF repo.
+          VLLM_MODEL_REPO: ${{ vars.VLLM_MODEL_REPO || 'Qwen/Qwen3-4B-Instruct-2507' }}
+        run: |
+          chmod +x scripts/deploy_vllm_cloud_run.sh scripts/push_vllm_image.sh
+          ./scripts/deploy_vllm_cloud_run.sh \
+            "${PROJECT_ID}" \
+            "${REGION}" \
+            "${SERVICE}" \
+            "${REPO}" \
+            "${IMAGE_NAME}" \
+            "${GITHUB_SHA}"
+
+      # ── Deploy-only path (skip_build=true) ───────────────────────────────
+      # Reuses an already-pushed image in Artifact Registry.
+
+      - name: Deploy existing image to Cloud Run
+        if: ${{ env.SKIP_BUILD == 'true' }}
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
+          # Mirror the SKIP_BUILD normalization: push events default to public.
+          ALLOW_PUBLIC: ${{ github.event_name == 'push' && 'true' || inputs.allow_public }}
+          GPU_TYPE: ${{ vars.VLLM_GPU_TYPE || 'nvidia-l4' }}
+          CPU: ${{ vars.VLLM_CPU || '8' }}
+          MEMORY: ${{ vars.VLLM_MEMORY || '32Gi' }}
+          MIN_INSTANCES: ${{ vars.VLLM_MIN_INSTANCES || '0' }}
+          MAX_INSTANCES: ${{ vars.VLLM_MAX_INSTANCES || '1' }}
+          MODEL_REPO: ${{ vars.VLLM_MODEL_REPO || 'Qwen/Qwen3-4B-Instruct-2507' }}
+          MODEL_DIR: ${{ vars.VLLM_MODEL_DIR || 'Qwen3-4B-Instruct-2507' }}
+          VLLM_MAX_MODEL_LEN: ${{ vars.VLLM_MAX_MODEL_LEN || '4096' }}
+          VLLM_MAX_NUM_SEQS: ${{ vars.VLLM_MAX_NUM_SEQS || '4' }}
+          VLLM_GPU_MEMORY_UTILIZATION: ${{ vars.VLLM_GPU_MEMORY_UTILIZATION || '0.70' }}
+          VLLM_TOOL_CALL_PARSER: ${{ vars.VLLM_TOOL_CALL_PARSER || 'hermes' }}
+        run: |
+          IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "Deploying ${IMAGE_URI} to service ${SERVICE}"
+
+          deploy_args=(
+            run deploy "${SERVICE}"
+            --project "${PROJECT_ID}"
+            --region "${REGION}"
+            --platform managed
+            --image "${IMAGE_URI}"
+            --port 8080
+            --cpu "${CPU}"
+            --memory "${MEMORY}"
+            --gpu "1"
+            --gpu-type "${GPU_TYPE}"
+            --no-gpu-zonal-redundancy
+            --no-cpu-throttling
+            --min-instances "${MIN_INSTANCES}"
+            --max-instances "${MAX_INSTANCES}"
+            --concurrency "1"
+            --timeout "900"
+            --set-env-vars "VLLM_MODEL=${MODEL_REPO},VLLM_MODEL_PATH=/model-cache/${MODEL_DIR},VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION},VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN},VLLM_MAX_NUM_SEQS=${VLLM_MAX_NUM_SEQS},VLLM_TOOL_CALL_PARSER=${VLLM_TOOL_CALL_PARSER}"
+          )
+
+          if [ "${ALLOW_PUBLIC}" = "true" ]; then
+            deploy_args+=(--no-invoker-iam-check)
+          fi
+
+          gcloud "${deploy_args[@]}"
+
+      - name: Capture service URL & health check
+        id: url
+        run: |
+          SERVICE_URL=$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" --region="${REGION}" \
+            --format='value(status.url)')
+          VLLM_BASE_URL="${SERVICE_URL}/v1"
+          echo "service_url=${SERVICE_URL}" >> "$GITHUB_OUTPUT"
+          echo "vllm_base_url=${VLLM_BASE_URL}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### vLLM deployment complete"
+            echo ""
+            echo "**Project:** \`${PROJECT_ID}\`"
+            echo "**Region:** \`${REGION}\`"
+            echo "**Service:** \`${SERVICE}\`"
+            echo "**URL:** ${SERVICE_URL}"
+            echo "**VLLM_BASE_URL:** \`${VLLM_BASE_URL}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Polling ${SERVICE_URL}/health (up to 5 min)..."
+          code=000
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "${SERVICE_URL}/health" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "Healthy after ${i} attempts."
+              break
+            fi
+            sleep 10
+          done
+          if [ "$code" != "200" ]; then
+            echo "::warning::Health check did not return 200 within timeout. Model load on first GPU cold-start can take several minutes — check Cloud Run logs if this persists."
+          fi
+
+      - name: Smoke test — concurrent chat completions
+        env:
+          SERVICE_URL: ${{ steps.url.outputs.service_url }}
+          MODEL: ${{ vars.VLLM_MODEL_REPO || 'Qwen/Qwen3-4B-Instruct-2507' }}
+        run: |
+          echo "Testing ${SERVICE_URL}/v1/chat/completions with 5 concurrent requests..."
+          for i in 11 12 13 14 15; do
+            curl -s "${SERVICE_URL}/v1/chat/completions" \
+              -H "Content-Type: application/json" \
+              -d "{\"model\": \"${MODEL}\", \"messages\": [{\"role\": \"user\", \"content\": \"What is $i squared?\"}], \"max_tokens\": 20}" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'$i: ' + d['choices'][0]['message']['content'])" &
+          done
+          wait
+          echo "Smoke test complete."
+
+      - name: Update VLLM_BASE_URL variable and trigger backend deploy
+        # Only when manually dispatched with the checkbox. On automatic push
+        # rebuilds the service URL doesn't change, so backend redeploy is
+        # unnecessary.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_deploy_backend }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+          VLLM_BASE_URL: ${{ steps.url.outputs.vllm_base_url }}
+          BACKEND_REF: ${{ inputs.backend_ref }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::Secret GH_DISPATCH_TOKEN is empty. Create a PAT with 'repo' + 'workflow' scope and add it as a repo secret, or set auto_deploy_backend=false."
+            exit 1
+          fi
+
+          echo "Setting repo variable VLLM_BASE_URL=${VLLM_BASE_URL}"
+          if gh variable list --repo "${{ github.repository }}" | grep -q '^VLLM_BASE_URL\b'; then
+            gh variable set VLLM_BASE_URL --body "${VLLM_BASE_URL}" --repo "${{ github.repository }}"
+          else
+            gh variable set VLLM_BASE_URL --body "${VLLM_BASE_URL}" --repo "${{ github.repository }}"
+          fi
+
+          echo "Triggering deploy-backend.yml on ref=${BACKEND_REF}"
+          gh workflow run deploy-backend.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${BACKEND_REF}"
+
+          {
+            echo ""
+            echo "### Backend deploy triggered"
+            echo "**Ref:** \`${BACKEND_REF}\` (main=prod, staging=dev)"
+            echo "**VLLM_BASE_URL set to:** \`${VLLM_BASE_URL}\`"
+            RUN_URL="https://github.com/${{ github.repository }}/actions/workflows/deploy-backend.yml"
+            echo "[View backend runs](${RUN_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify failure via email
+        if: ${{ failure() && vars.ALERT_EMAIL_TO != '' }}
+        uses: ./.github/actions/notify-failure
+        with:
+          smtp_host: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+          smtp_port: ${{ vars.SMTP_PORT || '587' }}
+          smtp_user: ${{ vars.SMTP_USER }}
+          smtp_password: ${{ secrets.SMTP_PASSWORD }}
+          from_email: ${{ vars.SMTP_FROM_EMAIL }}
+          to: ${{ vars.ALERT_EMAIL_TO }}
