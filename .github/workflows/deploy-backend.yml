@@ -166,6 +166,41 @@ jobs:
         working-directory: terraform
         run: terraform validate
 
+      # Secrets may have been created manually (see gcp.md §2) before Terraform
+      # managed them. Import any that exist in GCP but aren't in state yet so
+      # `apply` doesn't fail with a 409 "already exists" error.
+      # Secret IDs are environment-suffixed (DATABASE_URL_dev / DATABASE_URL_prod)
+      # so dev and prod are fully isolated.
+      - name: Import pre-existing Secret Manager secrets
+        working-directory: terraform
+        env:
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
+        run: |
+          set -euo pipefail
+          declare -A SECRETS=(
+            [google_secret_manager_secret.database_url]="DATABASE_URL_${ENVIRONMENT}"
+            [google_secret_manager_secret.google_maps_api_key]="GOOGLE_MAPS_API_KEY_${ENVIRONMENT}"
+            [google_secret_manager_secret.tavily_api_key]="TAVILY_API_KEY_${ENVIRONMENT}"
+            [google_secret_manager_secret.vllm_api_key]="VLLM_API_KEY_${ENVIRONMENT}"
+            [google_secret_manager_secret.backend_internal_api_key]="BACKEND_INTERNAL_API_KEY_${ENVIRONMENT}"
+            [google_secret_manager_secret.hf_token]="HF_TOKEN_${ENVIRONMENT}"
+            [google_secret_manager_secret.smtp_password]="SMTP_PASSWORD_${ENVIRONMENT}"
+          )
+          STATE_LIST=$(terraform state list 2>/dev/null || true)
+          for tf_addr in "${!SECRETS[@]}"; do
+            gcp_id="${SECRETS[$tf_addr]}"
+            if echo "$STATE_LIST" | grep -qx "$tf_addr"; then
+              echo "✓ already in state: $tf_addr"
+              continue
+            fi
+            if gcloud secrets describe "$gcp_id" --project="${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
+              echo "→ importing $tf_addr from projects/${{ env.PROJECT_ID }}/secrets/$gcp_id"
+              terraform import "$tf_addr" "projects/${{ env.PROJECT_ID }}/secrets/$gcp_id"
+            else
+              echo "  (skipping $gcp_id — doesn't exist yet, Terraform will create it)"
+            fi
+          done
+
       - name: Terraform Plan
         working-directory: terraform
         run: terraform plan -out=tfplan
@@ -175,7 +210,11 @@ jobs:
         run: terraform apply -auto-approve tfplan
 
       # ── 5. Populate GCP Secrets Manager ───────────────────────────────────
+      # Writes to env-suffixed secret IDs (e.g. GOOGLE_MAPS_API_KEY_dev /
+      # GOOGLE_MAPS_API_KEY_prod) so dev and prod stay isolated.
       - name: Populate secrets in Secret Manager
+        env:
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
         run: |
           populate_secret() {
             local name="$1"
@@ -189,12 +228,12 @@ jobs:
               --project="${{ env.PROJECT_ID }}" 2>&1 || true
           }
 
-          populate_secret "GOOGLE_MAPS_API_KEY"    "${{ secrets.GOOGLE_MAPS_API_KEY }}"
-          populate_secret "TAVILY_API_KEY"          "${{ secrets.TAVILY_API_KEY }}"
-          populate_secret "VLLM_API_KEY"            "${{ secrets.VLLM_API_KEY }}"
-          populate_secret "BACKEND_INTERNAL_API_KEY" "${{ secrets.BACKEND_INTERNAL_API_KEY }}"
-          populate_secret "HF_TOKEN"                "${{ secrets.HF_TOKEN }}"
-          populate_secret "SMTP_PASSWORD"            "${{ secrets.SMTP_PASSWORD }}"
+          populate_secret "GOOGLE_MAPS_API_KEY_${ENVIRONMENT}"     "${{ secrets.GOOGLE_MAPS_API_KEY }}"
+          populate_secret "TAVILY_API_KEY_${ENVIRONMENT}"          "${{ secrets.TAVILY_API_KEY }}"
+          populate_secret "VLLM_API_KEY_${ENVIRONMENT}"            "${{ secrets.VLLM_API_KEY }}"
+          populate_secret "BACKEND_INTERNAL_API_KEY_${ENVIRONMENT}" "${{ secrets.BACKEND_INTERNAL_API_KEY }}"
+          populate_secret "HF_TOKEN_${ENVIRONMENT}"                "${{ secrets.HF_TOKEN }}"
+          populate_secret "SMTP_PASSWORD_${ENVIRONMENT}"           "${{ secrets.SMTP_PASSWORD }}"
 
       # ── 6. Deployment summary ──────────────────────────────────────────────
       - name: Deployment summary

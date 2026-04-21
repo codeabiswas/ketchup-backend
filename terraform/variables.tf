@@ -74,12 +74,6 @@ variable "analytics_job_service_account_email" {
   default     = ""
 }
 
-variable "database_url_secret_name" {
-  description = "Secret Manager secret name for DATABASE_URL"
-  type        = string
-  default     = "DATABASE_URL"
-}
-
 variable "analytics_job_schedule" {
   description = "Cron schedule for analytics materialization (UTC)"
   type        = string

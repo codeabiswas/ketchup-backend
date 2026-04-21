@@ -32,7 +32,7 @@ resource "google_cloud_run_v2_job" "analytics_materialization" {
           name = "DATABASE_URL"
           value_source {
             secret_key_ref {
-              secret  = var.database_url_secret_name
+              secret  = google_secret_manager_secret.database_url.secret_id
               version = "latest"
             }
           }
