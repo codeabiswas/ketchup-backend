@@ -2,7 +2,7 @@ name: Deploy vLLM to GCP
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
     paths:
       - "vllm/**"
       - "scripts/push_vllm_image.sh"
