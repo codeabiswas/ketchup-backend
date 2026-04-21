@@ -51,4 +51,4 @@ gcloud builds submit \
   --substitutions _LOCATION=us-central1,_REPO=ketchup-vllm-dev,_NAME=qwen3-4b-2507-vllm
 ```
 
-That produces an Artifact Registry image suitable for Cloud Run or another serving target. If you later need Vertex AI Model Registry, this image can be referenced from the serving infrastructure, but the artifact push implemented here is Artifact Registry based.
+That produces an Artifact Registry image suitable for Cloud Run or another serving target. If you later need Vertex AI Model Registry, this image can be referenced from the serving infrastructure, but the artifact push implemented here is Artifact Registry based .
