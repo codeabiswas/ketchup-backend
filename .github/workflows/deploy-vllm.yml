@@ -50,6 +50,11 @@ env:
   SERVICE: ${{ inputs.service_name || vars.VLLM_SERVICE_NAME || 'ketchup-vllm' }}
   REPO: ${{ vars.VLLM_REPO_NAME || 'ketchup-vllm-dev' }}
   IMAGE_NAME: ${{ vars.VLLM_IMAGE_NAME || 'qwen3-4b-2507-vllm' }}
+  # Normalize skip_build across event types:
+  # - push events default to 'true' (fast deploy-only path, reuses :latest)
+  # - workflow_dispatch uses the input (whose own default is also true)
+  # To force a rebuild, dispatch manually with skip_build unchecked.
+  SKIP_BUILD: ${{ github.event_name == 'push' && 'true' || inputs.skip_build }}
 
 jobs:
   deploy:
@@ -100,7 +105,7 @@ jobs:
             --project "${PROJECT_ID}"
 
       - name: Provision HF_TOKEN in Secret Manager
-        if: ${{ inputs.skip_build != true }}
+        if: ${{ env.SKIP_BUILD != 'true' }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -113,7 +118,7 @@ jobs:
           fi
 
       - name: Grant Cloud Build access to HF_TOKEN
-        if: ${{ inputs.skip_build != true }}
+        if: ${{ env.SKIP_BUILD != 'true' }}
         run: |
           PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')
           # Newer projects use the default Compute SA for Cloud Build; older
@@ -132,7 +137,7 @@ jobs:
       # ── Build + deploy path (default) ────────────────────────────────────
 
       - name: Build & deploy via scripts/deploy_vllm_cloud_run.sh
-        if: ${{ inputs.skip_build != true }}
+        if: ${{ env.SKIP_BUILD != 'true' }}
         env:
           # On push events, inputs.* is empty — default ALLOW_PUBLIC to true.
           ALLOW_PUBLIC: ${{ github.event_name == 'push' && 'true' || inputs.allow_public }}
@@ -165,10 +170,11 @@ jobs:
       # Reuses an already-pushed image in Artifact Registry.
 
       - name: Deploy existing image to Cloud Run
-        if: ${{ inputs.skip_build == true }}
+        if: ${{ env.SKIP_BUILD == 'true' }}
         env:
           IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
-          ALLOW_PUBLIC: ${{ inputs.allow_public }}
+          # Mirror the SKIP_BUILD normalization: push events default to public.
+          ALLOW_PUBLIC: ${{ github.event_name == 'push' && 'true' || inputs.allow_public }}
           GPU_TYPE: ${{ vars.VLLM_GPU_TYPE || 'nvidia-l4' }}
           CPU: ${{ vars.VLLM_CPU || '8' }}
           MEMORY: ${{ vars.VLLM_MEMORY || '32Gi' }}
