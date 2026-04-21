@@ -46,12 +46,12 @@ output "analytics_job_name" {
 output "next_steps" {
   description = "Post-deployment checklist"
   value       = <<-EOT
-    1. Populate secrets that were not auto-set:
-         printf "%s" "$GOOGLE_MAPS_API_KEY" | gcloud secrets versions add GOOGLE_MAPS_API_KEY --data-file=-
-         printf "%s" "$TAVILY_API_KEY"      | gcloud secrets versions add TAVILY_API_KEY      --data-file=-
-         printf "%s" "$VLLM_API_KEY"        | gcloud secrets versions add VLLM_API_KEY        --data-file=-
-         printf "%s" "$BACKEND_INTERNAL_API_KEY" | gcloud secrets versions add BACKEND_INTERNAL_API_KEY --data-file=-
-         printf "%s" "$HF_TOKEN"            | gcloud secrets versions add HF_TOKEN            --data-file=-
+    1. Populate secrets that were not auto-set (env-suffixed, e.g. _${var.environment}):
+         printf "%s" "$GOOGLE_MAPS_API_KEY" | gcloud secrets versions add GOOGLE_MAPS_API_KEY_${var.environment} --data-file=-
+         printf "%s" "$TAVILY_API_KEY"      | gcloud secrets versions add TAVILY_API_KEY_${var.environment}      --data-file=-
+         printf "%s" "$VLLM_API_KEY"        | gcloud secrets versions add VLLM_API_KEY_${var.environment}        --data-file=-
+         printf "%s" "$BACKEND_INTERNAL_API_KEY" | gcloud secrets versions add BACKEND_INTERNAL_API_KEY_${var.environment} --data-file=-
+         printf "%s" "$HF_TOKEN"            | gcloud secrets versions add HF_TOKEN_${var.environment}            --data-file=-
 
     2. Run DB migrations (first deploy):
          gcloud run jobs execute ketchup-analytics-materialization-${var.environment} --region ${var.region}
