@@ -52,3 +52,6 @@ gcloud builds submit \
 ```
 
 That produces an Artifact Registry image suitable for Cloud Run or another serving target. If you later need Vertex AI Model Registry, this image can be referenced from the serving infrastructure, but the artifact push implemented here is Artifact Registry based .
+
+# Test change
+- testing a simple flow
