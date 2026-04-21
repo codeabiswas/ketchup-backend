@@ -54,7 +54,7 @@ env:
   # - push events default to 'true' (fast deploy-only path, reuses :latest)
   # - workflow_dispatch uses the input (whose own default is also true)
   # To force a rebuild, dispatch manually with skip_build unchecked.
-  SKIP_BUILD: ${{ github.event_name == 'push' && 'true' || inputs.skip_build }}
+  SKIP_BUILD: ${{ github.event_name == 'push' && 'false' || inputs.skip_build }}
 
 jobs:
   deploy:
@@ -237,15 +237,33 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "Polling ${SERVICE_URL}/health (up to 5 min)..."
+          code=000
           for i in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' "${SERVICE_URL}/health" || echo 000)
             if [ "$code" = "200" ]; then
               echo "Healthy after ${i} attempts."
-              exit 0
+              break
             fi
             sleep 10
           done
-          echo "::warning::Health check did not return 200 within timeout. Model load on first GPU cold-start can take several minutes — check Cloud Run logs if this persists."
+          if [ "$code" != "200" ]; then
+            echo "::warning::Health check did not return 200 within timeout. Model load on first GPU cold-start can take several minutes — check Cloud Run logs if this persists."
+          fi
+
+      - name: Smoke test — concurrent chat completions
+        env:
+          SERVICE_URL: ${{ steps.url.outputs.service_url }}
+          MODEL: ${{ vars.VLLM_MODEL_REPO || 'Qwen/Qwen3-4B-Instruct-2507' }}
+        run: |
+          echo "Testing ${SERVICE_URL}/v1/chat/completions with 5 concurrent requests..."
+          for i in 11 12 13 14 15; do
+            curl -s "${SERVICE_URL}/v1/chat/completions" \
+              -H "Content-Type: application/json" \
+              -d "{\"model\": \"${MODEL}\", \"messages\": [{\"role\": \"user\", \"content\": \"What is $i squared?\"}], \"max_tokens\": 20}" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'$i: ' + d['choices'][0]['message']['content'])" &
+          done
+          wait
+          echo "Smoke test complete."
 
       - name: Update VLLM_BASE_URL variable and trigger backend deploy
         # Only when manually dispatched with the checkbox. On automatic push
