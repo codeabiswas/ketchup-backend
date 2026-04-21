@@ -1,7 +1,9 @@
-# --- Secret placeholders (shell secret versions populated outside Terraform) ---
+# --- Secret placeholders ---
+# Secrets are suffixed with `_${var.environment}` so dev and prod are fully
+# isolated within the same project (e.g. DATABASE_URL_dev vs DATABASE_URL_prod).
 
 resource "google_secret_manager_secret" "database_url" {
-  secret_id = var.database_url_secret_name
+  secret_id = "DATABASE_URL_${var.environment}"
 
   replication {
     auto {}
@@ -11,7 +13,7 @@ resource "google_secret_manager_secret" "database_url" {
 }
 
 resource "google_secret_manager_secret" "google_maps_api_key" {
-  secret_id = "GOOGLE_MAPS_API_KEY"
+  secret_id = "GOOGLE_MAPS_API_KEY_${var.environment}"
 
   replication {
     auto {}
@@ -21,7 +23,7 @@ resource "google_secret_manager_secret" "google_maps_api_key" {
 }
 
 resource "google_secret_manager_secret" "tavily_api_key" {
-  secret_id = "TAVILY_API_KEY"
+  secret_id = "TAVILY_API_KEY_${var.environment}"
 
   replication {
     auto {}
@@ -31,7 +33,7 @@ resource "google_secret_manager_secret" "tavily_api_key" {
 }
 
 resource "google_secret_manager_secret" "vllm_api_key" {
-  secret_id = "VLLM_API_KEY"
+  secret_id = "VLLM_API_KEY_${var.environment}"
 
   replication {
     auto {}
@@ -41,7 +43,7 @@ resource "google_secret_manager_secret" "vllm_api_key" {
 }
 
 resource "google_secret_manager_secret" "backend_internal_api_key" {
-  secret_id = "BACKEND_INTERNAL_API_KEY"
+  secret_id = "BACKEND_INTERNAL_API_KEY_${var.environment}"
 
   replication {
     auto {}
@@ -51,7 +53,7 @@ resource "google_secret_manager_secret" "backend_internal_api_key" {
 }
 
 resource "google_secret_manager_secret" "hf_token" {
-  secret_id = "HF_TOKEN"
+  secret_id = "HF_TOKEN_${var.environment}"
 
   replication {
     auto {}
@@ -61,7 +63,7 @@ resource "google_secret_manager_secret" "hf_token" {
 }
 
 resource "google_secret_manager_secret" "smtp_password" {
-  secret_id = "SMTP_PASSWORD"
+  secret_id = "SMTP_PASSWORD_${var.environment}"
 
   replication {
     auto {}
