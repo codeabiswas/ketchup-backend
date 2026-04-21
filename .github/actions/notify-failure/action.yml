@@ -1,0 +1,49 @@
+name: Notify failure via email
+description: Send an email when a workflow job fails. Uses SMTP.
+
+inputs:
+  smtp_host:
+    description: SMTP server hostname
+    required: false
+    default: smtp.gmail.com
+  smtp_port:
+    description: SMTP server port
+    required: false
+    default: "587"
+  smtp_user:
+    description: SMTP auth username (also used as From if from_email is empty)
+    required: true
+  smtp_password:
+    description: SMTP auth password / app password
+    required: true
+  from_email:
+    description: Override From address (defaults to smtp_user)
+    required: false
+    default: ""
+  to:
+    description: Comma-separated recipient list
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Send failure email
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: ${{ inputs.smtp_host }}
+        server_port: ${{ inputs.smtp_port }}
+        username: ${{ inputs.smtp_user }}
+        password: ${{ inputs.smtp_password }}
+        from: Ketchup CI <${{ inputs.from_email != '' && inputs.from_email || inputs.smtp_user }}>
+        to: ${{ inputs.to }}
+        subject: "[FAIL] ${{ github.workflow }} on ${{ github.ref_name }}"
+        body: |
+          Workflow "${{ github.workflow }}" failed.
+
+          Repository: ${{ github.repository }}
+          Branch/ref: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Triggered by: ${{ github.actor }}
+          Event: ${{ github.event_name }}
+
+          View run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
