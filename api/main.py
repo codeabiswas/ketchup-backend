@@ -7,6 +7,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from agents.planning import close_planner_client, init_planner_client
+from analytics.bootstrap import ensure_analytics_schema
 from api.routes import (
     auth,
     availability,
@@ -17,10 +19,9 @@ from api.routes import (
     plans,
     users,
 )
-from analytics.bootstrap import ensure_analytics_schema
-from agents.planning import close_planner_client, init_planner_client
 from config import get_settings
 from database import db
+from database.migrate import run_migrations
 from services.errors import ServiceError
 from utils.invite_expiry import expire_stale_invites_loop
 
@@ -28,6 +29,7 @@ from utils.invite_expiry import expire_stale_invites_loop
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.connect()
+    await run_migrations()
     await ensure_analytics_schema()
     await init_planner_client()
 

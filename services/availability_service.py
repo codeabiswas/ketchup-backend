@@ -73,5 +73,10 @@ async def replace_user_availability(
             }
         )
 
+    await db.execute(
+        "UPDATE users SET onboarding_completed = TRUE WHERE id = $1",
+        user_id,
+    )
+
     return {"blocks": persisted_blocks}
 
