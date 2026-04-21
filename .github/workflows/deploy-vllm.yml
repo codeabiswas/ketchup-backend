@@ -54,7 +54,7 @@ env:
   # - push events default to 'true' (fast deploy-only path, reuses :latest)
   # - workflow_dispatch uses the input (whose own default is also true)
   # To force a rebuild, dispatch manually with skip_build unchecked.
-  SKIP_BUILD: ${{ github.event_name == 'push' && 'false' || inputs.skip_build }}
+  SKIP_BUILD: ${{ github.event_name == 'push' && 'true' || inputs.skip_build }}
 
 jobs:
   deploy:
@@ -269,7 +269,7 @@ jobs:
         # Only when manually dispatched with the checkbox. On automatic push
         # rebuilds the service URL doesn't change, so backend redeploy is
         # unnecessary.
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_deploy_backend }}
+        if: ${{ inputs.auto_deploy_backend }}
         env:
           GH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
           VLLM_BASE_URL: ${{ steps.url.outputs.vllm_base_url }}
